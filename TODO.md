@@ -1,0 +1,9 @@
+- Some sort of "command style" API. Not full-blown CQRS. 
+- EDA?
+- Leverage type system. Full static typing. 
+- Shared core? Textbook microservices?
+- E2E blackbox testing
+- Figure out testing harness and set up...
+- Comms between services? probably gRPC
+- Project structure? Is there a .NET de-facto or convention? Is it worth sticking to that? or bring your own?
+- Dependency research.
