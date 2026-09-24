@@ -2,6 +2,8 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lending.Api", "src\Lending.Api\Lending.Api.csproj", "{29BA930F-96FC-4D08-9236-E0F9399A82CE}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Access.Api", "src\Access.Api\Access.Api.csproj", "{FCDA9013-E6F8-41FA-988C-34AAD791A99F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -12,5 +14,9 @@ Global
 		{29BA930F-96FC-4D08-9236-E0F9399A82CE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{29BA930F-96FC-4D08-9236-E0F9399A82CE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{29BA930F-96FC-4D08-9236-E0F9399A82CE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{FCDA9013-E6F8-41FA-988C-34AAD791A99F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{FCDA9013-E6F8-41FA-988C-34AAD791A99F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{FCDA9013-E6F8-41FA-988C-34AAD791A99F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{FCDA9013-E6F8-41FA-988C-34AAD791A99F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
