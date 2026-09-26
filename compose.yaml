@@ -1,0 +1,64 @@
+name: peaceful-urchin
+
+services:
+  access:
+    build:
+      context: .
+      dockerfile: src/Access.Api/Dockerfile
+    environment:
+      ASPNETCORE_HTTP_PORTS: 8080
+    ports:
+      - "127.0.0.1:${ACCESS_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  lending:
+    build:
+      context: .
+      dockerfile: src/Lending.Api/Dockerfile
+    environment:
+      ASPNETCORE_HTTP_PORTS: 8080
+    ports:
+      - "127.0.0.1:${LENDING_PORT:-8082}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: local-demo
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./docker/postgres/01-create-service-databases.sql:/docker-entrypoint-initdb.d/01-create-service-databases.sql:ro
+
+  tests:
+    profiles: [test]
+    build:
+      context: .
+      dockerfile: tests/Database.Migrations.Tests/Dockerfile
+    environment:
+      TEST_POSTGRES_CONNECTION: "Host=postgres;Port=5432;Database=postgres;Username=postgres;Password=local-demo"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

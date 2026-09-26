@@ -1,0 +1,9 @@
+**
+!global.json
+!peaceful-urchin.sln
+!src/
+!src/**
+!tests/
+!tests/**
+**/bin/
+**/obj/
