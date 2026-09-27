@@ -8,6 +8,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Database.Migrations", "src\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Database.Migrations.Tests", "tests\Database.Migrations.Tests\Database.Migrations.Tests.csproj", "{2AD65245-0C15-4873-AA93-EC8774C9C5BB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared.Vocabulary", "src\Shared.Vocabulary\Shared.Vocabulary.csproj", "{23727572-0A42-49B9-9C96-C01F6FB979E1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared.Vocabulary.Tests", "tests\Shared.Vocabulary.Tests\Shared.Vocabulary.Tests.csproj", "{110AE7BD-67FE-4084-A86C-810E43420A1E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +34,13 @@ Global
 		{2AD65245-0C15-4873-AA93-EC8774C9C5BB}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2AD65245-0C15-4873-AA93-EC8774C9C5BB}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2AD65245-0C15-4873-AA93-EC8774C9C5BB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{23727572-0A42-49B9-9C96-C01F6FB979E1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{23727572-0A42-49B9-9C96-C01F6FB979E1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{23727572-0A42-49B9-9C96-C01F6FB979E1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{23727572-0A42-49B9-9C96-C01F6FB979E1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{110AE7BD-67FE-4084-A86C-810E43420A1E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{110AE7BD-67FE-4084-A86C-810E43420A1E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{110AE7BD-67FE-4084-A86C-810E43420A1E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{110AE7BD-67FE-4084-A86C-810E43420A1E}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
