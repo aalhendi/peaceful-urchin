@@ -31,6 +31,21 @@ services:
       retries: 10
       start_period: 5s
 
+  credit:
+    build:
+      context: .
+      dockerfile: src/Credit.Api/Dockerfile
+    environment:
+      ASPNETCORE_HTTP_PORTS: 8080
+    ports:
+      - "127.0.0.1:${CREDIT_PORT:-8083}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health/live"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
   postgres:
     image: postgres:18.4-alpine
     environment:
