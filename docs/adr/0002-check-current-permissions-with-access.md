@@ -6,7 +6,7 @@
 
 ## Context
 
-A Bank A employee signs in and receives a credential. Later, an administrator removes a role that gave the employee `Loan.Create`. The employee then sends `CreateLoan` to Lending with the still-valid credential. Should Lending trust the permissions known at sign-in, or ask Access what the employee may do now?
+A Bank A employee logs in and receives a credential. Later, an administrator removes a role that gave the employee `Loan.Create`. The employee then sends `CreateLoan` to Lending with the still-valid credential. Should Lending trust the permissions known at login, or ask Access what the employee may do now?
 
 [OWASP recommends checking permissions on every request](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html#validate-the-permissions-on-every-request), but leaves the source of those permissions open.
 

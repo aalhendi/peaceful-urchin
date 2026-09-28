@@ -3,6 +3,6 @@
   - Lookups? Genuinely useful case of caching. Institutions, currencies etc.
 - Gateway? Service discovery?
 - Workflows? Model the business processes.
-- Architecture diagram!
+- Why do we have 2 booleans for elgibility... can be one. probably should
 - Docstrings? Not a fan till code is locked down
 - establish some form of glossary for our language and terminology
