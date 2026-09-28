@@ -26,6 +26,7 @@ internal sealed record StaffRole
     public static readonly StaffRole CustomerWriter = new("CustomerWriter", "Customer.Write");
     public static readonly StaffRole LoanCreator = new("LoanCreator", "Loan.Create");
     public static readonly StaffRole LoanBlocker = new("LoanBlocker", "Loan.Block");
+    public static readonly StaffRole PaymentWriter = new("PaymentWriter", "Payment.Write");
     public static readonly StaffRole CreditAnalyst = new("CreditAnalyst", "Credit.Read");
     public static readonly StaffRole AccessAdmin = new("AccessAdmin", "StaffRoles.Change");
 
@@ -40,7 +41,7 @@ internal sealed record StaffRole
 
     public bool IsAllowedFor(InstitutionKind kind)
     {
-        if (this == LoanCreator) return kind == InstitutionKind.Bank;
+        if (this == LoanCreator || this == PaymentWriter) return kind == InstitutionKind.Bank;
         if (this == CreditAnalyst || this == AccessAdmin || this == LoanBlocker) return kind == InstitutionKind.Cinet;
         return true;
     }
@@ -51,6 +52,7 @@ internal sealed record StaffRole
         "CustomerWriter" => CustomerWriter,
         "LoanCreator" => LoanCreator,
         "LoanBlocker" => LoanBlocker,
+        "PaymentWriter" => PaymentWriter,
         "CreditAnalyst" => CreditAnalyst,
         "AccessAdmin" => AccessAdmin,
         _ => new ParseError("Unknown staff role.")

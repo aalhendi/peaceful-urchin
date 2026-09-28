@@ -11,6 +11,8 @@ internal sealed record LendingActor(
 {
     public bool MayCreateLoan => InstitutionKind == InstitutionKind.Bank && Permissions.Contains("Loan.Create");
     public bool MayBlockLoans => InstitutionKind == InstitutionKind.Cinet && Permissions.Contains("Loan.Block");
+    public bool MayUploadPayments => InstitutionKind == InstitutionKind.Bank && Permissions.Contains("Payment.Write");
+    public bool MayReadCustomerLoans => Permissions.Contains("Customer.Read");
 }
 
 internal sealed record CreateLoanCommand(
@@ -18,7 +20,8 @@ internal sealed record CreateLoanCommand(
     DateOnly StartDate,
     LoanTenor Tenor,
     LoanPrincipal Principal,
-    FinancingRate Rate);
+    FinancingRate Rate,
+    RepaymentSchedule Schedule);
 
 internal sealed record LoanCreated(LoanId Id);
 
@@ -73,7 +76,7 @@ internal sealed class LendingService(ILendingStore store, ICustomerEligibilityCl
     private async Task<CreateLoanOutcome> PersistLoanAsync(LendingActor actor, CreateLoanCommand command)
     {
         var loan = new Loan(LoanId.New(), command.CustomerId, actor.InstitutionId,
-            command.StartDate, command.Tenor, command.Principal, command.Rate, LoanStatus.Open);
+            command.StartDate, command.Tenor, command.Principal, command.Rate, LoanStatus.Open, command.Schedule);
         return await store.CreateLoanAsync(loan) ? new LoanCreated(loan.Id) : new CustomerBlocked();
     }
 

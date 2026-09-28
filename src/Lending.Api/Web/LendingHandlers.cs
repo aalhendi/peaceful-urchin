@@ -25,7 +25,16 @@ internal static class LendingHandlers
             FinancingRate.Parse(rate).Value is not FinancingRate financingRate)
             return Results.BadRequest("Invalid loan information.");
 
-        var command = new CreateLoanCommand(customerId, startDate, tenor, principal, financingRate);
+        if (request.Installments is null ||
+            request.Installments.Any(installment =>
+                installment is null || installment.DueDate is null || installment.AmountKwd is null))
+            return Results.BadRequest("A repayment schedule is required.");
+        var drafts = request.Installments.Select(installment =>
+            new InstallmentDraft(installment.DueDate!.Value, installment.AmountKwd!.Value)).ToArray();
+        if (RepaymentSchedule.Parse(startDate, tenor, drafts).Value is not RepaymentSchedule schedule)
+            return Results.BadRequest("Invalid repayment schedule.");
+
+        var command = new CreateLoanCommand(customerId, startDate, tenor, principal, financingRate, schedule);
         return (await service.CreateLoanAsync(
                 resolved.Actor, resolved.Credential, command, context.RequestAborted)) switch
             {
@@ -58,6 +67,65 @@ internal static class LendingHandlers
                 LoanForbidden => Results.StatusCode(403),
                 LoanDependencyUnavailable => Results.StatusCode(503)
             };
+    }
+
+    internal static async Task<IResult> UploadPaymentsAsync(
+        UploadPaymentsRequest request, HttpContext context, AccessActorClient access, PaymentService service)
+    {
+        var actor = await ReadActorAsync(context, access);
+        if (actor.Value is not ActorResolved resolved) return ActorError(context, actor);
+        if (request.Payments is not { Length: > 0 and <= 100 })
+            return Results.BadRequest("Provide 1 to 100 payments.");
+
+        var payments = new List<PaymentDraft>(request.Payments.Length);
+        foreach (var item in request.Payments)
+        {
+            if (item is null || item.LoanId is not Guid loanIdValue ||
+                LoanId.Parse(loanIdValue).Value is not LoanId loanId ||
+                item.PaymentDate is not DateOnly paymentDate ||
+                item.AmountKwd is not decimal amountValue ||
+                PositiveKwdAmount.Parse(amountValue).Value is not PositiveKwdAmount amount ||
+                PaymentReference.Parse(item.ExternalReference).Value is not PaymentReference reference)
+                return Results.BadRequest("Invalid payment information.");
+            payments.Add(new PaymentDraft(loanId, paymentDate, amount, reference));
+        }
+
+        context.Response.Headers.CacheControl = "no-store";
+        return await service.UploadAsync(resolved.Actor, payments) switch
+        {
+            PaymentsRecorded recorded => Results.Ok(new UploadPaymentsResponse(
+                recorded.Ids.Select(id => id.Value).ToArray())),
+            PaymentLoanMissing => Results.NotFound(),
+            PaymentReferenceConflict => Results.Conflict("Payment reference was already used for different data."),
+            PaymentBeforeLoanStart => Results.BadRequest("Payment date precedes the loan start date."),
+            LoanForbidden => Results.StatusCode(403)
+        };
+    }
+
+    internal static async Task<IResult> ReadRepaymentSummaryAsync(
+        RepaymentSummaryRequest request, HttpContext context, AccessActorClient access,
+        RepaymentQueryService service, TimeProvider clock)
+    {
+        var actor = await ReadActorAsync(context, access);
+        if (actor.Value is not ActorResolved resolved) return ActorError(context, actor);
+        if (CivilId.Parse(request.CustomerCivilId).Value is not CivilId customerId)
+            return Results.BadRequest("Invalid customer Civil ID.");
+
+        var today = DateOnly.FromDateTime(clock.GetUtcNow().ToOffset(TimeSpan.FromHours(3)).DateTime);
+        context.Response.Headers.CacheControl = "no-store";
+        return await service.ReadAsync(resolved.Actor, customerId, today) switch
+        {
+            RepaymentSummaryFound found => Results.Ok(new RepaymentSummaryResponse(
+                found.Summary.DelinquentLoans.Select(loan =>
+                    new DelinquentLoanResponse(loan.LoanId.Value, loan.OverdueAmount.Dinars)).ToArray(),
+                found.Summary.NextDuePayment is { } due
+                    ? new DuePaymentResponse(due.LoanId.Value, due.DueDate, due.RemainingAmount.Dinars, due.Overdue)
+                    : null,
+                found.Summary.LastFivePayments.Select(payment => new RecordedPaymentResponse(
+                    payment.Id.Value, payment.LoanId.Value, payment.PaymentDate,
+                    payment.Amount.Dinars, payment.Reference.Value)).ToArray())),
+            LoanForbidden => Results.StatusCode(403)
+        };
     }
 
     private static async Task<ActorLookupResult> ReadActorAsync(HttpContext context, AccessActorClient access)

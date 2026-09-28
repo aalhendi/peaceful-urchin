@@ -1,9 +1,8 @@
-- Some sort of "command style" API. Not full-blown CQRS. 
-- EDA?
-- Leverage type system. Full static typing. 
-- Shared core? Textbook microservices?
-- E2E blackbox testing
-- Figure out testing harness and set up...
-- Comms between services? probably gRPC
-- Project structure? Is there a .NET de-facto or convention? Is it worth sticking to that? or bring your own?
-- Dependency research.
+- EDA? Could do something like an Outbox.
+- Caching layer isn't worthwhile atm but might be nice to introduce anyway a "scaling" PoC?
+  - Lookups? Genuinely useful case of caching. Institutions, currencies etc.
+- Gateway? Service discovery?
+- Workflows? Model the business processes.
+- Architecture diagram!
+- Docstrings? Not a fan till code is locked down
+- establish some form of glossary for our language and terminology

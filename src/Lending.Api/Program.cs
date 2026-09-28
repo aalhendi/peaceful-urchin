@@ -25,8 +25,13 @@ builder.Services.AddSingleton(serviceProvider =>
     return NpgsqlDataSource.Create(connectionString);
 });
 builder.Services.AddSingleton<ILendingStore, LendingStore>();
+builder.Services.AddSingleton<IPaymentStore, PaymentStore>();
+builder.Services.AddSingleton<IRepaymentQueryStore, RepaymentQueryStore>();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<ICustomerEligibilityClient, CreditEligibilityClient>();
 builder.Services.AddScoped<LendingService>();
+builder.Services.AddScoped<PaymentService>();
+builder.Services.AddScoped<RepaymentQueryService>();
 builder.Services.AddHttpClient("Access", client =>
 {
     client.BaseAddress = new Uri(builder.Configuration["Access:BaseUrl"]

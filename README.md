@@ -26,6 +26,7 @@ OpenAI GPT 6-Sol (Proprietary) and local Google Gemma-4-E4B (Apache 2.0) used as
 - Find and compare online sources such as https://learn.microsoft.com, and my personal Obsidian vault.
 - Translate concepts I know from Rust / Java into C# and .NET.
 - Code generation for test cases. Used to validate invariants that I expect to be held up.
+- Commit message generation
 
 In short, I treat it as a **glorified search engine and concept translator**, with a human in the loop for decisions, verification and implementation.
 

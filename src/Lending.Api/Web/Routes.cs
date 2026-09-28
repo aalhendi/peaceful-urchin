@@ -31,6 +31,24 @@ internal static class Routes
             .Produces(403)
             .Produces(404)
             .Produces(503);
+
+        app.MapPost("/payments", LendingHandlers.UploadPaymentsAsync)
+            .DocumentBearerToken()
+            .Produces<UploadPaymentsResponse>()
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(409)
+            .Produces(503);
+
+        app.MapPost("/customers/repayments/summary", LendingHandlers.ReadRepaymentSummaryAsync)
+            .DocumentBearerToken()
+            .Produces<RepaymentSummaryResponse>()
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(503);
     }
 
     private static RouteHandlerBuilder DocumentBearerToken(this RouteHandlerBuilder route) =>

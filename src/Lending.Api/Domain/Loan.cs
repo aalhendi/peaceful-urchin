@@ -9,6 +9,9 @@ internal sealed record LoanId
     public Guid Value { get; }
 
     public static LoanId New() => new(Guid.CreateVersion7());
+
+    public static ParseResult<LoanId> Parse(Guid value) =>
+        value == Guid.Empty ? new ParseError("Loan ID cannot be empty.") : new LoanId(value);
 }
 
 internal sealed record LoanTenor
@@ -17,20 +20,20 @@ internal sealed record LoanTenor
 
     public int Months { get; }
 
+    // NOTE(aalhendi): This is an arbitrary limit. Business usually provides these bounds.
     public static ParseResult<LoanTenor> Parse(int months) =>
-        months > 0 ? new LoanTenor(months) : new ParseError("Loan tenor must be positive.");
+        months is > 0 and <= 360 ? new LoanTenor(months) : new ParseError("Loan tenor must be 1 to 360 months.");
 }
 
 internal sealed record LoanPrincipal
 {
-    private LoanPrincipal(KwdAmount amount) => Amount = amount;
+    private LoanPrincipal(PositiveKwdAmount amount) => Amount = amount;
 
-    public KwdAmount Amount { get; }
+    public PositiveKwdAmount Amount { get; }
 
-    public static ParseResult<LoanPrincipal> Parse(decimal dinars) => KwdAmount.Parse(dinars) switch
+    public static ParseResult<LoanPrincipal> Parse(decimal dinars) => PositiveKwdAmount.Parse(dinars) switch
     {
-        KwdAmount { Dinars: > 0 } amount => new LoanPrincipal(amount),
-        KwdAmount => new ParseError("Loan amount must be positive."),
+        PositiveKwdAmount amount => new LoanPrincipal(amount),
         ParseError error => error
     };
 }
@@ -60,4 +63,5 @@ internal sealed record Loan(
     LoanTenor Tenor,
     LoanPrincipal Principal,
     FinancingRate Rate,
-    LoanStatus Status);
+    LoanStatus Status,
+    RepaymentSchedule Schedule);

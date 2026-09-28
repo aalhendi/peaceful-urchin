@@ -37,6 +37,16 @@ internal sealed class LendingStore(NpgsqlDataSource dataSource) : ILendingStore
             RatePercent = loan.Rate.PercentPoints,
             Status = loan.Status.Value
         }, transaction);
+        await connection.ExecuteAsync("""
+                                      INSERT INTO loan_installments (loan_id, sequence_no, due_date, amount_kwd)
+                                      VALUES (@LoanId, @SequenceNo, @DueDate, @AmountKwd)
+                                      """, loan.Schedule.Installments.Select((installment, index) => new
+        {
+            LoanId = loan.Id.Value,
+            SequenceNo = index + 1,
+            installment.DueDate,
+            AmountKwd = installment.Amount.Dinars
+        }), transaction);
         await transaction.CommitAsync();
         return true;
     }
