@@ -9,6 +9,11 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0-rc.1.26425.128" />
+        <PackageReference Include="Dapper" Version="2.1.89" />
+        <PackageReference Include="Npgsql" Version="10.0.3" />
+        <ProjectReference Include="../Database.Migrations/Database.Migrations.csproj" />
+        <ProjectReference Include="../Shared.Vocabulary/Shared.Vocabulary.csproj" />
+        <EmbeddedResource Include="Migrations/*.sql" />
     </ItemGroup>
 
 </Project>
