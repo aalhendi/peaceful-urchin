@@ -24,10 +24,16 @@ public sealed class AccessFlowTests
         Assert.NotEqual(bank.InstitutionId, cinet.InstitutionId);
         Assert.Equal("Bank", bank.InstitutionKind);
         Assert.Equal("CINET", cinet.InstitutionKind);
-        Assert.Equal(["CustomerReader", "LoanCreator", "PaymentWriter"], bank.Roles);
-        Assert.Equal(["Customer.Read", "Loan.Create", "Payment.Write"], bank.Permissions);
-        Assert.Equal(["AccessAdmin", "CreditAnalyst", "CustomerReader", "LoanBlocker"], cinet.Roles);
-        Assert.Equal(["StaffRoles.Change", "Credit.Read", "Customer.Read", "Loan.Block"], cinet.Permissions);
+        Assert.Equal(["CustomerReader", "LitigationReader", "LoanCreator", "PaymentWriter"], bank.Roles);
+        Assert.Equal(["Customer.Read", "Litigation.Read", "Loan.Create", "Payment.Write"], bank.Permissions);
+        Assert.Equal([
+            "AccessAdmin", "CreditAnalyst", "CustomerReader", "LitigationReader", "LitigationWriter",
+            "LoanBlocker"
+        ], cinet.Roles);
+        Assert.Equal([
+            "StaffRoles.Change", "Credit.Read", "Customer.Read", "Litigation.Read", "Litigation.Write",
+            "Loan.Block"
+        ], cinet.Permissions);
     }
 
     [Fact]
@@ -142,6 +148,10 @@ public sealed class AccessFlowTests
         using var wrongInstitution = await ReplaceRolesAsync(app.Client, cinetToken, bankBefore.ActorId,
             ["LoanBlocker"]);
         Assert.Equal(HttpStatusCode.BadRequest, wrongInstitution.StatusCode);
+
+        using var litigationWriterAtBank = await ReplaceRolesAsync(app.Client, cinetToken, bankBefore.ActorId,
+            ["LitigationWriter"]);
+        Assert.Equal(HttpStatusCode.BadRequest, litigationWriterAtBank.StatusCode);
 
         using var unknown = await ReplaceRolesAsync(app.Client, cinetToken, cinetBefore.ActorId,
             ["UnknownRole"]);

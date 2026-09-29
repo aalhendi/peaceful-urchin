@@ -58,6 +58,35 @@ internal static class Routes
             .Produces(401)
             .Produces(403)
             .Produces(503);
+
+        app.MapPost("/loans/{loanId:guid}/litigations", LitigationHandlers.OpenAsync)
+            .DocumentBearerToken()
+            .Produces<LitigationOpenedResponse>(201)
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(409)
+            .Produces(503);
+
+        app.MapGet("/loans/{loanId:guid}/litigations", LitigationHandlers.ReadAsync)
+            .DocumentBearerToken()
+            .Produces<LoanLitigationResponse>()
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(503);
+
+        app.MapPut("/litigations/{litigationId:guid}/verdict", LitigationHandlers.RecordVerdictAsync)
+            .DocumentBearerToken()
+            .Produces(204)
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(409)
+            .Produces(503);
     }
 
     private static RouteHandlerBuilder DocumentBearerToken(this RouteHandlerBuilder route) =>

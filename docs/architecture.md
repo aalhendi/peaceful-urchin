@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
     staff["Bank and CINET staff"] -->|Login, check actor, manage roles| access["Access API"]
-    staff -->|Create loans, block loans, check eligibility, upload payments, read repayments| lending["Lending API"]
+    staff -->|Create loans, manage court cases, block loans, check eligibility, upload payments, read repayments| lending["Lending API"]
     staff -->|Read customer profiles and update names| credit["Credit API"]
 
     lending -->|Validate session and get current permissions| access
@@ -41,5 +41,6 @@ When a bank creates a loan, Lending asks Credit whether the customer exists. Len
 | Tenor | The length of the loan in months. |
 | Repayment schedule / installment | The bank's expected payments: one installment per month for the loan's tenor. Each installment has a due date and a positive KWD amount. |
 | Payment | Money the bank reports receiving against one of its loans. A bank's payment reference identifies a report so an identical retry does not create another payment. |
+| Court case | A court reference recorded against one loan. Pending -> current. Innocent or Guilty is a dated verdict. The customer and bank come from the loan. |
 | Delinquent loan | An open loan with an overdue amount greater than zero. An installment becomes overdue the day after its due date. Payments cover the oldest unpaid installments first, including future ones.|
 | Next due payment | The oldest unpaid installment across the customer's visible open loans, including an installment already overdue. |

@@ -170,6 +170,118 @@ public sealed class LendingFlowTests
     }
 
     [Fact]
+    public async Task CinetRecordsCasesAndVerdictsForABankLoan()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+        var bank = await ActorAsync(app.AccessClient, bankToken);
+        var cinet = await ActorAsync(app.AccessClient, cinetToken);
+        using var created = await CreateLoanAsync(app.LendingClient, bankToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var loan = Assert.IsType<LoanReceipt>(await created.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+
+        using var opened = await OpenLitigationAsync(app.LendingClient, cinetToken, loan.Id, "  KUW/2026/001  ");
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        var caseId = Assert.IsType<LitigationOpenedReceipt>(await opened.Content.ReadFromJsonAsync<
+            LitigationOpenedReceipt>(TestContext.Current.CancellationToken)).LitigationId;
+        using var pendingResponse = await ReadLitigationAsync(app.LendingClient, bankToken, loan.Id);
+        var pending = await ReadLitigationReceiptAsync(pendingResponse);
+        Assert.Equal("no-store", pendingResponse.Headers.CacheControl?.ToString());
+        Assert.Equal(loan.Id, pending.LoanId);
+        Assert.Equal(CustomerId, pending.CustomerCivilId);
+        Assert.Equal(bank.InstitutionId, pending.InstitutionId);
+        var pendingCase = Assert.Single(pending.Cases);
+        Assert.Equal(caseId, pendingCase.LitigationId);
+        Assert.Equal("KUW/2026/001", pendingCase.CourtId);
+        Assert.Equal("Pending", pendingCase.Status);
+        Assert.Null(pendingCase.VerdictDate);
+
+        using var verdict = await RecordVerdictAsync(app.LendingClient, cinetToken, caseId,
+            "Guilty", new DateOnly(2026, 10, 9));
+        using var repeated = await RecordVerdictAsync(app.LendingClient, cinetToken, caseId,
+            "Guilty", new DateOnly(2026, 10, 9));
+        using var changed = await RecordVerdictAsync(app.LendingClient, cinetToken, caseId,
+            "Innocent", new DateOnly(2026, 10, 9));
+        using var finalResponse = await ReadLitigationAsync(app.LendingClient, cinetToken, loan.Id);
+        var finalCase = Assert.Single((await ReadLitigationReceiptAsync(finalResponse)).Cases);
+
+        Assert.Equal(HttpStatusCode.NoContent, verdict.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, repeated.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, changed.StatusCode);
+        Assert.Equal("Guilty", finalCase.Status);
+        Assert.Equal(new DateOnly(2026, 10, 9), finalCase.VerdictDate);
+        await using var connection = new NpgsqlConnection(app.LendingConnectionString);
+        var audit = await connection.QuerySingleAsync<LitigationAuditRow>("""
+                                                                          SELECT opened_by AS "OpenedBy",
+                                                                                 verdict_by AS "VerdictBy"
+                                                                          FROM loan_litigations WHERE id = @Id
+                                                                          """, new { Id = caseId });
+        Assert.Equal(cinet.ActorId, audit.OpenedBy);
+        Assert.Equal(cinet.ActorId, audit.VerdictBy);
+
+        using var secondOpened = await OpenLitigationAsync(app.LendingClient, cinetToken, loan.Id, "KUW/2026/002");
+        var secondCaseId = Assert.IsType<LitigationOpenedReceipt>(await secondOpened.Content.ReadFromJsonAsync<
+            LitigationOpenedReceipt>(TestContext.Current.CancellationToken)).LitigationId;
+        using var innocent = await RecordVerdictAsync(app.LendingClient, cinetToken, secondCaseId,
+            "Innocent", new DateOnly(2026, 10, 10));
+        using var bothResponse = await ReadLitigationAsync(app.LendingClient, bankToken, loan.Id);
+        var both = await ReadLitigationReceiptAsync(bothResponse);
+        Assert.Equal(HttpStatusCode.NoContent, innocent.StatusCode);
+        Assert.Equal("Innocent", both.Cases.Single(item => item.LitigationId == secondCaseId).Status);
+    }
+
+    [Fact]
+    public async Task LitigationRequiresPermissionAndHidesOtherBanksLoans()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        await app.SeedSecondBankAsync();
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var secondBankToken = await LoginAsync(app.AccessClient, "bank-b@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+        using var created = await CreateLoanAsync(app.LendingClient, bankToken);
+        var loan = Assert.IsType<LoanReceipt>(await created.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+
+        using var bankWrite = await OpenLitigationAsync(app.LendingClient, bankToken, loan.Id, "KUW/2026/001");
+        using var invalid = await OpenLitigationAsync(app.LendingClient, cinetToken, loan.Id, "   ");
+        using var unknownLoan = await OpenLitigationAsync(app.LendingClient, cinetToken, Guid.NewGuid(),
+            "KUW/2026/001");
+        using var opened = await OpenLitigationAsync(app.LendingClient, cinetToken, loan.Id, "KUW/2026/001");
+        var caseId = Assert.IsType<LitigationOpenedReceipt>(await opened.Content.ReadFromJsonAsync<
+            LitigationOpenedReceipt>(TestContext.Current.CancellationToken)).LitigationId;
+        using var duplicate = await OpenLitigationAsync(app.LendingClient, cinetToken, loan.Id, "KUW/2026/001");
+        using var otherBankRead = await ReadLitigationAsync(app.LendingClient, secondBankToken, loan.Id);
+        using var missingTokenRead = await ReadLitigationAsync(app.LendingClient, null, loan.Id);
+        using var bankVerdict = await RecordVerdictAsync(app.LendingClient, bankToken, caseId,
+            "Guilty", new DateOnly(2026, 10, 9));
+        using var pendingVerdict = await RecordVerdictAsync(app.LendingClient, cinetToken, caseId,
+            "Pending", new DateOnly(2026, 10, 9));
+        using var futureVerdict = await RecordVerdictAsync(app.LendingClient, cinetToken, caseId,
+            "Guilty", new DateOnly(2026, 10, 11));
+        using var beforeLoanVerdict = await RecordVerdictAsync(app.LendingClient, cinetToken, caseId,
+            "Guilty", new DateOnly(2026, 9, 30));
+        using var unknownCase = await RecordVerdictAsync(app.LendingClient, cinetToken, Guid.NewGuid(),
+            "Guilty", new DateOnly(2026, 10, 9));
+
+        Assert.Equal(HttpStatusCode.Forbidden, bankWrite.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknownLoan.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, otherBankRead.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, missingTokenRead.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, bankVerdict.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, pendingVerdict.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, futureVerdict.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, beforeLoanVerdict.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknownCase.StatusCode);
+    }
+
+    [Fact]
     public async Task InvalidInputsAndInvalidSessionDoNotWriteLoans()
     {
         await using var app = await TestApp.StartAsync();
@@ -503,6 +615,13 @@ public sealed class LendingFlowTests
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
         Assert.True(paths.GetProperty("/customers/repayments/summary").GetProperty("post")
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        var litigationRoute = paths.GetProperty("/loans/{loanId}/litigations");
+        Assert.True(litigationRoute.GetProperty("post").GetProperty("security")[0]
+            .TryGetProperty("Bearer", out _));
+        Assert.True(litigationRoute.GetProperty("get").GetProperty("security")[0]
+            .TryGetProperty("Bearer", out _));
+        Assert.True(paths.GetProperty("/litigations/{litigationId}/verdict").GetProperty("put")
+            .GetProperty("security")[0].TryGetProperty("Bearer", out _));
 
         using var creditResponse = await app.CreditClient.GetAsync("/openapi/v1.json",
             TestContext.Current.CancellationToken);
@@ -642,6 +761,39 @@ public sealed class LendingFlowTests
             TestContext.Current.CancellationToken));
     }
 
+    private static async Task<HttpResponseMessage> OpenLitigationAsync(
+        HttpClient client, string token, Guid loanId, string courtId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/loans/{loanId}/litigations");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { CourtId = courtId });
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<HttpResponseMessage> ReadLitigationAsync(
+        HttpClient client, string? token, Guid loanId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/loans/{loanId}/litigations");
+        if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<HttpResponseMessage> RecordVerdictAsync(
+        HttpClient client, string token, Guid litigationId, string status, DateOnly verdictDate)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/litigations/{litigationId}/verdict");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { Status = status, VerdictDate = verdictDate });
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<LoanLitigationReceipt> ReadLitigationReceiptAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<LoanLitigationReceipt>(await response.Content.ReadFromJsonAsync<LoanLitigationReceipt>(
+            TestContext.Current.CancellationToken));
+    }
+
     private sealed record LoginReceipt(string AccessToken);
 
     private sealed record ActorReceipt(Guid ActorId, Guid InstitutionId);
@@ -651,6 +803,22 @@ public sealed class LendingFlowTests
     private sealed record EligibilityReceipt(bool Eligible);
 
     private sealed record CustomerProfileReceipt(string CustomerCivilId, string Name, DateOnly DateOfBirth);
+
+    private sealed record LitigationOpenedReceipt(Guid LitigationId);
+
+    private sealed record LitigationCaseReceipt(
+        Guid LitigationId,
+        string CourtId,
+        string Status,
+        DateOnly? VerdictDate);
+
+    private sealed record LoanLitigationReceipt(
+        Guid LoanId,
+        string CustomerCivilId,
+        Guid InstitutionId,
+        LitigationCaseReceipt[] Cases);
+
+    private sealed record LitigationAuditRow(Guid OpenedBy, Guid? VerdictBy);
 
     private sealed record InstallmentBody(DateOnly DueDate, decimal AmountKwd);
 
@@ -738,7 +906,8 @@ public sealed class LendingFlowTests
                                           """, new { UserId = userId, InstitutionId = institutionId });
             await connection.ExecuteAsync("""
                                           INSERT INTO staff_user_roles (staff_user_id, role)
-                                          VALUES (@UserId, 'CustomerReader'), (@UserId, 'LoanCreator'),
+                                          VALUES (@UserId, 'CustomerReader'), (@UserId, 'LitigationReader'),
+                                                 (@UserId, 'LoanCreator'),
                                                  (@UserId, 'PaymentWriter')
                                           """, new { UserId = userId });
         }
@@ -884,7 +1053,7 @@ public sealed class LendingFlowTests
 
             public override DateTimeOffset GetUtcNow() => KuwaitDate is { } date
                 ? new DateTimeOffset(date.Year, date.Month, date.Day, 9, 0, 0, TimeSpan.Zero)
-                : throw new InvalidOperationException("Set the test date before reading the repayment summary.");
+                : throw new InvalidOperationException("Set the test date before a date-sensitive request.");
         }
     }
 }

@@ -13,8 +13,8 @@ internal static class LendingHandlers
     internal static async Task<IResult> CreateLoanAsync(
         CreateLoanRequest request, HttpContext context, AccessActorClient access, LendingService service)
     {
-        var actor = await ReadActorAsync(context, access);
-        if (actor.Value is not ActorResolved resolved) return ActorError(context, actor);
+        var actor = await LendingActorHttp.ReadAsync(context, access);
+        if (actor.Value is not ActorResolved resolved) return LendingActorHttp.Error(context, actor);
 
         if (CivilId.Parse(request.CustomerCivilId).Value is not CivilId customerId ||
             request.StartDate is not DateOnly startDate ||
@@ -25,12 +25,13 @@ internal static class LendingHandlers
             FinancingRate.Parse(rate).Value is not FinancingRate financingRate)
             return Results.BadRequest("Invalid loan information.");
 
-        if (request.Installments is null ||
-            request.Installments.Any(installment =>
+        var installments = request.Installments;
+        if (installments is null ||
+            installments.Any(installment =>
                 installment is null || installment.DueDate is null || installment.AmountKwd is null))
             return Results.BadRequest("A repayment schedule is required.");
-        var drafts = request.Installments.Select(installment =>
-            new InstallmentDraft(installment.DueDate!.Value, installment.AmountKwd!.Value)).ToArray();
+        var drafts = installments.Select(installment =>
+            new InstallmentDraft(installment!.DueDate!.Value, installment.AmountKwd!.Value)).ToArray();
         if (RepaymentSchedule.Parse(startDate, tenor, drafts).Value is not RepaymentSchedule schedule)
             return Results.BadRequest("Invalid repayment schedule.");
 
@@ -41,7 +42,7 @@ internal static class LendingHandlers
                 LoanCreated created => Results.Json(new LoanCreatedResponse(created.Id.Value), statusCode: 201),
                 CustomerBlocked => Results.Conflict("Customer is blocked from receiving a loan."),
                 CustomerNotFound => Results.NotFound(),
-                LoanUnauthorized => Unauthorized(context),
+                LoanUnauthorized => LendingActorHttp.Unauthorized(context),
                 LoanDependencyUnavailable => Results.StatusCode(503),
                 LoanForbidden => Results.StatusCode(403)
             };
@@ -50,8 +51,8 @@ internal static class LendingHandlers
     internal static async Task<IResult> SetLoanBlockAsync(
         SetLoanBlockRequest request, HttpContext context, AccessActorClient access, LendingService service)
     {
-        var actor = await ReadActorAsync(context, access);
-        if (actor.Value is not ActorResolved resolved) return ActorError(context, actor);
+        var actor = await LendingActorHttp.ReadAsync(context, access);
+        if (actor.Value is not ActorResolved resolved) return LendingActorHttp.Error(context, actor);
 
         if (CivilId.Parse(request.CustomerCivilId).Value is not CivilId customerId ||
             request.Blocked is not bool blocked)
@@ -62,7 +63,7 @@ internal static class LendingHandlers
             {
                 LoanBlockChanged => Results.NoContent(),
                 CustomerNotFound => Results.NotFound(),
-                LoanUnauthorized => Unauthorized(context),
+                LoanUnauthorized => LendingActorHttp.Unauthorized(context),
                 LoanForbidden => Results.StatusCode(403),
                 LoanDependencyUnavailable => Results.StatusCode(503)
             };
@@ -71,8 +72,8 @@ internal static class LendingHandlers
     internal static async Task<IResult> CheckLoanEligibilityAsync(
         CheckLoanEligibilityRequest request, HttpContext context, AccessActorClient access, LendingService service)
     {
-        var actor = await ReadActorAsync(context, access);
-        if (actor.Value is not ActorResolved resolved) return ActorError(context, actor);
+        var actor = await LendingActorHttp.ReadAsync(context, access);
+        if (actor.Value is not ActorResolved resolved) return LendingActorHttp.Error(context, actor);
         if (CivilId.Parse(request.CustomerCivilId).Value is not CivilId customerId)
             return Results.BadRequest("Invalid customer Civil ID.");
 
@@ -82,7 +83,7 @@ internal static class LendingHandlers
             {
                 LoanEligibilityKnown known => Results.Ok(new LoanEligibilityResponse(known.Eligible)),
                 CustomerNotFound => Results.NotFound(),
-                LoanUnauthorized => Unauthorized(context),
+                LoanUnauthorized => LendingActorHttp.Unauthorized(context),
                 LoanForbidden => Results.StatusCode(403),
                 LoanDependencyUnavailable => Results.StatusCode(503)
             };
@@ -91,8 +92,8 @@ internal static class LendingHandlers
     internal static async Task<IResult> UploadPaymentsAsync(
         UploadPaymentsRequest request, HttpContext context, AccessActorClient access, PaymentService service)
     {
-        var actor = await ReadActorAsync(context, access);
-        if (actor.Value is not ActorResolved resolved) return ActorError(context, actor);
+        var actor = await LendingActorHttp.ReadAsync(context, access);
+        if (actor.Value is not ActorResolved resolved) return LendingActorHttp.Error(context, actor);
         if (request.Payments is not { Length: > 0 and <= 100 })
             return Results.BadRequest("Provide 1 to 100 payments.");
 
@@ -125,8 +126,8 @@ internal static class LendingHandlers
         RepaymentSummaryRequest request, HttpContext context, AccessActorClient access,
         RepaymentQueryService service, TimeProvider clock)
     {
-        var actor = await ReadActorAsync(context, access);
-        if (actor.Value is not ActorResolved resolved) return ActorError(context, actor);
+        var actor = await LendingActorHttp.ReadAsync(context, access);
+        if (actor.Value is not ActorResolved resolved) return LendingActorHttp.Error(context, actor);
         if (CivilId.Parse(request.CustomerCivilId).Value is not CivilId customerId)
             return Results.BadRequest("Invalid customer Civil ID.");
 
@@ -145,32 +146,5 @@ internal static class LendingHandlers
                     payment.Amount.Dinars, payment.Reference.Value)).ToArray())),
             LoanForbidden => Results.StatusCode(403)
         };
-    }
-
-    private static async Task<ActorLookupResult> ReadActorAsync(HttpContext context, AccessActorClient access)
-    {
-        if (context.Request.Headers.Authorization.Count != 1)
-            return new ActorUnauthorized();
-        var authorization = context.Request.Headers.Authorization.ToString();
-        if (!authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ||
-            authorization.Length is <= 7 or > 519)
-            return new ActorUnauthorized();
-
-        if (BearerCredential.Parse(authorization[7..]) is not BearerCredential credential)
-            return new ActorUnauthorized();
-        return await access.ResolveAsync(credential, context.RequestAborted);
-    }
-
-    private static IResult ActorError(HttpContext context, ActorLookupResult result) => result switch
-    {
-        ActorUnauthorized => Unauthorized(context),
-        ActorUnavailable => Results.StatusCode(503),
-        ActorResolved => throw new InvalidOperationException("Expected an actor lookup error.")
-    };
-
-    private static IResult Unauthorized(HttpContext context)
-    {
-        context.Response.Headers.WWWAuthenticate = "Bearer";
-        return Results.Unauthorized();
     }
 }
