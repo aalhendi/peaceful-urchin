@@ -7,4 +7,5 @@ internal interface ILendingStore
 {
     Task<bool> CreateLoanAsync(Loan loan);
     Task SetLoanBlockAsync(CivilId customerId, bool blocked, StaffActorId changedBy);
+    Task<bool> IsCustomerBlockedAsync(CivilId customerId);
 }

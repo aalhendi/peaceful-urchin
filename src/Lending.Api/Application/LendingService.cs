@@ -11,6 +11,7 @@ internal sealed record LendingActor(
 {
     public bool MayCreateLoan => InstitutionKind == InstitutionKind.Bank && Permissions.Contains("Loan.Create");
     public bool MayBlockLoans => InstitutionKind == InstitutionKind.Cinet && Permissions.Contains("Loan.Block");
+    public bool MayReadLoanEligibility => Permissions.Contains("Customer.Read") || MayCreateLoan || MayBlockLoans;
     public bool MayUploadPayments => InstitutionKind == InstitutionKind.Bank && Permissions.Contains("Payment.Write");
     public bool MayReadCustomerLoans => Permissions.Contains("Customer.Read");
 }
@@ -30,7 +31,7 @@ internal sealed record CustomerBlocked;
 internal sealed record LoanForbidden;
 
 internal union CreateLoanOutcome(
-    LoanCreated, CustomerBlocked, CustomerIneligible, CustomerNotFound,
+    LoanCreated, CustomerBlocked, CustomerNotFound,
     LoanUnauthorized, LoanForbidden, LoanDependencyUnavailable);
 
 internal sealed record LoanBlockChanged;
@@ -38,17 +39,21 @@ internal sealed record LoanBlockChanged;
 internal union ChangeLoanBlockOutcome(
     LoanBlockChanged, CustomerNotFound, LoanUnauthorized, LoanForbidden, LoanDependencyUnavailable);
 
-internal sealed class LendingService(ILendingStore store, ICustomerEligibilityClient customers)
+internal sealed record LoanEligibilityKnown(bool Eligible);
+
+internal union CheckLoanEligibilityOutcome(
+    LoanEligibilityKnown, CustomerNotFound, LoanUnauthorized, LoanForbidden, LoanDependencyUnavailable);
+
+internal sealed class LendingService(ILendingStore store, ICustomerLookupClient customers)
 {
     public async Task<CreateLoanOutcome> CreateLoanAsync(
         LendingActor actor, BearerCredential credential, CreateLoanCommand command, CancellationToken cancellationToken)
     {
         if (!actor.MayCreateLoan) return new LoanForbidden();
 
-        return await customers.CheckAsync(credential, command.CustomerId, cancellationToken) switch
+        return await customers.FindAsync(credential, command.CustomerId, cancellationToken) switch
         {
-            CustomerEligible => await PersistLoanAsync(actor, command),
-            CustomerIneligible ineligible => ineligible,
+            CustomerFound => await PersistLoanAsync(actor, command),
             CustomerNotFound missing => missing,
             LoanUnauthorized unauthorized => unauthorized,
             LoanForbidden forbidden => forbidden,
@@ -62,10 +67,24 @@ internal sealed class LendingService(ILendingStore store, ICustomerEligibilityCl
     {
         if (!actor.MayBlockLoans) return new LoanForbidden();
 
-        return await customers.CheckAsync(credential, customerId, cancellationToken) switch
+        return await customers.FindAsync(credential, customerId, cancellationToken) switch
         {
-            CustomerEligible => await PersistBlockAsync(actor, customerId, blocked),
-            CustomerIneligible => await PersistBlockAsync(actor, customerId, blocked),
+            CustomerFound => await PersistBlockAsync(actor, customerId, blocked),
+            CustomerNotFound missing => missing,
+            LoanUnauthorized unauthorized => unauthorized,
+            LoanForbidden forbidden => forbidden,
+            LoanDependencyUnavailable unavailable => unavailable
+        };
+    }
+
+    public async Task<CheckLoanEligibilityOutcome> CheckLoanEligibilityAsync(
+        LendingActor actor, BearerCredential credential, CivilId customerId, CancellationToken cancellationToken)
+    {
+        if (!actor.MayReadLoanEligibility) return new LoanForbidden();
+
+        return await customers.FindAsync(credential, customerId, cancellationToken) switch
+        {
+            CustomerFound => new LoanEligibilityKnown(!await store.IsCustomerBlockedAsync(customerId)),
             CustomerNotFound missing => missing,
             LoanUnauthorized unauthorized => unauthorized,
             LoanForbidden forbidden => forbidden,

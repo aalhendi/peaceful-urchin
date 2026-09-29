@@ -1,4 +1,3 @@
-using Credit.Api.Web.Contracts;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 
@@ -12,9 +11,9 @@ internal static class Routes
             app.MapOpenApi();
 
         app.MapGet("/health/live", CreditHandlers.Live);
-        app.MapPost("/customers/eligibility/check", CreditHandlers.CheckEligibilityAsync)
+        app.MapPost("/customers/lookup", CreditHandlers.LookupCustomerAsync)
             .DocumentBearerToken()
-            .Produces<EligibilityResponse>()
+            .Produces(204)
             .Produces(400)
             .Produces(401)
             .Produces(403)

@@ -19,7 +19,7 @@ namespace Lending.Api.Tests;
 public sealed class LendingFlowTests
 {
     private const string CustomerId = "180010100006";
-    private const string IneligibleCustomerId = "304022900002";
+    private const string SecondCustomerId = "304022900002";
     private const string UnknownCustomerId = "180010100014";
 
     [Fact]
@@ -53,8 +53,13 @@ public sealed class LendingFlowTests
         Assert.Equal(7.5m, stored.RatePercent);
         Assert.Equal("Open", stored.Status);
 
+        using var initiallyEligible = await CheckEligibilityAsync(app.LendingClient, bankToken);
+        Assert.True((await ReadEligibilityAsync(initiallyEligible)).Eligible);
+
         using var blocked = await SetBlockAsync(app.LendingClient, cinetToken, true);
         Assert.Equal(HttpStatusCode.NoContent, blocked.StatusCode);
+        using var blockedEligibility = await CheckEligibilityAsync(app.LendingClient, bankToken);
+        Assert.False((await ReadEligibilityAsync(blockedEligibility)).Eligible);
         using var sameBlock = await SetBlockAsync(app.LendingClient, cinetToken, true);
         Assert.Equal(HttpStatusCode.NoContent, sameBlock.StatusCode);
         using var refused = await CreateLoanAsync(app.LendingClient, bankToken);
@@ -63,6 +68,8 @@ public sealed class LendingFlowTests
 
         using var unblocked = await SetBlockAsync(app.LendingClient, cinetToken, false);
         Assert.Equal(HttpStatusCode.NoContent, unblocked.StatusCode);
+        using var restoredEligibility = await CheckEligibilityAsync(app.LendingClient, bankToken);
+        Assert.True((await ReadEligibilityAsync(restoredEligibility)).Eligible);
         using var createdAgain = await CreateLoanAsync(app.LendingClient, bankToken);
         Assert.Equal(HttpStatusCode.Created, createdAgain.StatusCode);
         Assert.Equal(2, await app.CountLoansAsync());
@@ -82,10 +89,10 @@ public sealed class LendingFlowTests
 
         using var bankBlock = await SetBlockAsync(app.LendingClient, bankToken, true);
         using var cinetLoan = await CreateLoanAsync(app.LendingClient, cinetToken);
-        using var creditBefore = await CheckEligibilityAsync(app.CreditClient, bankToken);
+        using var creditBefore = await LookupCustomerAsync(app.CreditClient, bankToken);
         Assert.Equal(HttpStatusCode.Forbidden, bankBlock.StatusCode);
         Assert.Equal(HttpStatusCode.Forbidden, cinetLoan.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, creditBefore.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, creditBefore.StatusCode);
 
         using var roleChange = new HttpRequestMessage(HttpMethod.Put, $"/staff-users/{bank.ActorId}/roles");
         roleChange.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cinetToken);
@@ -94,9 +101,11 @@ public sealed class LendingFlowTests
         Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
 
         using var revoked = await CreateLoanAsync(app.LendingClient, bankToken);
-        using var creditAfter = await CheckEligibilityAsync(app.CreditClient, bankToken);
+        using var creditAfter = await LookupCustomerAsync(app.CreditClient, bankToken);
+        using var eligibilityAfter = await CheckEligibilityAsync(app.LendingClient, bankToken);
         Assert.Equal(HttpStatusCode.Forbidden, revoked.StatusCode);
-        Assert.Equal(HttpStatusCode.Forbidden, creditAfter.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, creditAfter.StatusCode);
+        Assert.True((await ReadEligibilityAsync(eligibilityAfter)).Eligible);
         Assert.Equal(0, await app.CountLoansAsync());
     }
 
@@ -107,7 +116,7 @@ public sealed class LendingFlowTests
         var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
 
         using var missingToken = await CreateLoanAsync(app.LendingClient, null);
-        using var creditWithoutToken = await CheckEligibilityAsync(app.CreditClient, null);
+        using var creditWithoutToken = await LookupCustomerAsync(app.CreditClient, null);
         using var malformedToken = await CreateLoanAsync(app.LendingClient, "bad-token");
         using var invalid = await CreateLoanAsync(app.LendingClient, bankToken,
             new
@@ -155,7 +164,7 @@ public sealed class LendingFlowTests
     }
 
     [Fact]
-    public async Task MissingAndIneligibleCustomersCannotReceiveLoansOrBlocks()
+    public async Task MissingAndBlockedCustomersCannotReceiveLoans()
     {
         await using var app = await TestApp.StartAsync();
         var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
@@ -163,13 +172,17 @@ public sealed class LendingFlowTests
 
         using var unknownLoan = await CreateLoanAsync(app.LendingClient, bankToken,
             LoanBody(UnknownCustomerId));
-        using var ineligibleLoan = await CreateLoanAsync(app.LendingClient, bankToken,
-            LoanBody(IneligibleCustomerId));
+        using var seededEligibility = await CheckEligibilityAsync(app.LendingClient, bankToken, SecondCustomerId);
+        using var blockedLoan = await CreateLoanAsync(app.LendingClient, bankToken,
+            LoanBody(SecondCustomerId));
         using var unknownBlock = await SetBlockAsync(app.LendingClient, cinetToken, true, UnknownCustomerId);
+        using var unknownEligibility = await CheckEligibilityAsync(app.LendingClient, bankToken, UnknownCustomerId);
 
         Assert.Equal(HttpStatusCode.NotFound, unknownLoan.StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, ineligibleLoan.StatusCode);
+        Assert.False((await ReadEligibilityAsync(seededEligibility)).Eligible);
+        Assert.Equal(HttpStatusCode.Conflict, blockedLoan.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, unknownBlock.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, unknownEligibility.StatusCode);
         Assert.Equal(0, await app.CountLoansAsync());
         Assert.Empty(await app.FindBlockChangesAsync());
     }
@@ -424,6 +437,8 @@ public sealed class LendingFlowTests
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
         Assert.True(paths.GetProperty("/loan-blocks").GetProperty("put")
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        Assert.True(paths.GetProperty("/customers/eligibility/check").GetProperty("post")
+            .GetProperty("security")[0].TryGetProperty("Bearer", out _));
         Assert.True(paths.GetProperty("/payments").GetProperty("post")
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
         Assert.True(paths.GetProperty("/customers/repayments/summary").GetProperty("post")
@@ -436,7 +451,7 @@ public sealed class LendingFlowTests
             TestContext.Current.CancellationToken);
         Assert.NotNull(creditDocument);
         Assert.True(creditDocument.RootElement.GetProperty("paths")
-            .GetProperty("/customers/eligibility/check").GetProperty("post")
+            .GetProperty("/customers/lookup").GetProperty("post")
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
     }
 
@@ -513,9 +528,25 @@ public sealed class LendingFlowTests
             TestContext.Current.CancellationToken));
     }
 
-    private static async Task<HttpResponseMessage> CheckEligibilityAsync(HttpClient client, string? token)
+    private static async Task<HttpResponseMessage> CheckEligibilityAsync(
+        HttpClient client, string? token, string customerId = CustomerId)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/customers/eligibility/check");
+        if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { CustomerCivilId = customerId });
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<EligibilityReceipt> ReadEligibilityAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<EligibilityReceipt>(await response.Content.ReadFromJsonAsync<EligibilityReceipt>(
+            TestContext.Current.CancellationToken));
+    }
+
+    private static async Task<HttpResponseMessage> LookupCustomerAsync(HttpClient client, string? token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/customers/lookup");
         if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         request.Content = JsonContent.Create(new { CustomerCivilId = CustomerId });
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
@@ -526,6 +557,8 @@ public sealed class LendingFlowTests
     private sealed record ActorReceipt(Guid ActorId, Guid InstitutionId);
 
     private sealed record LoanReceipt(Guid Id);
+
+    private sealed record EligibilityReceipt(bool Eligible);
 
     private sealed record InstallmentBody(DateOnly DueDate, decimal AmountKwd);
 

@@ -2,7 +2,7 @@ using Shared.Vocabulary;
 
 namespace Credit.Api.Domain;
 
-internal sealed record Customer(CivilId Id, bool LoanEligible);
+internal sealed record Customer(CivilId Id);
 
 internal sealed record InstitutionKind
 {

@@ -40,7 +40,6 @@ internal static class LendingHandlers
             {
                 LoanCreated created => Results.Json(new LoanCreatedResponse(created.Id.Value), statusCode: 201),
                 CustomerBlocked => Results.Conflict("Customer is blocked from receiving a loan."),
-                CustomerIneligible => Results.Conflict("Customer is not eligible for a loan."),
                 CustomerNotFound => Results.NotFound(),
                 LoanUnauthorized => Unauthorized(context),
                 LoanDependencyUnavailable => Results.StatusCode(503),
@@ -62,6 +61,26 @@ internal static class LendingHandlers
                 resolved.Actor, resolved.Credential, customerId, blocked, context.RequestAborted)) switch
             {
                 LoanBlockChanged => Results.NoContent(),
+                CustomerNotFound => Results.NotFound(),
+                LoanUnauthorized => Unauthorized(context),
+                LoanForbidden => Results.StatusCode(403),
+                LoanDependencyUnavailable => Results.StatusCode(503)
+            };
+    }
+
+    internal static async Task<IResult> CheckLoanEligibilityAsync(
+        CheckLoanEligibilityRequest request, HttpContext context, AccessActorClient access, LendingService service)
+    {
+        var actor = await ReadActorAsync(context, access);
+        if (actor.Value is not ActorResolved resolved) return ActorError(context, actor);
+        if (CivilId.Parse(request.CustomerCivilId).Value is not CivilId customerId)
+            return Results.BadRequest("Invalid customer Civil ID.");
+
+        context.Response.Headers.CacheControl = "no-store";
+        return await service.CheckLoanEligibilityAsync(
+                resolved.Actor, resolved.Credential, customerId, context.RequestAborted) switch
+            {
+                LoanEligibilityKnown known => Results.Ok(new LoanEligibilityResponse(known.Eligible)),
                 CustomerNotFound => Results.NotFound(),
                 LoanUnauthorized => Unauthorized(context),
                 LoanForbidden => Results.StatusCode(403),

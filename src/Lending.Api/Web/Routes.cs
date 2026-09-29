@@ -32,6 +32,15 @@ internal static class Routes
             .Produces(404)
             .Produces(503);
 
+        app.MapPost("/customers/eligibility/check", LendingHandlers.CheckLoanEligibilityAsync)
+            .DocumentBearerToken()
+            .Produces<LoanEligibilityResponse>()
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(503);
+
         app.MapPost("/payments", LendingHandlers.UploadPaymentsAsync)
             .DocumentBearerToken()
             .Produces<UploadPaymentsResponse>()

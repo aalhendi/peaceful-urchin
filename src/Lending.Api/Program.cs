@@ -28,7 +28,7 @@ builder.Services.AddSingleton<ILendingStore, LendingStore>();
 builder.Services.AddSingleton<IPaymentStore, PaymentStore>();
 builder.Services.AddSingleton<IRepaymentQueryStore, RepaymentQueryStore>();
 builder.Services.AddSingleton(TimeProvider.System);
-builder.Services.AddScoped<ICustomerEligibilityClient, CreditEligibilityClient>();
+builder.Services.AddScoped<ICustomerLookupClient, CreditCustomerClient>();
 builder.Services.AddScoped<LendingService>();
 builder.Services.AddScoped<PaymentService>();
 builder.Services.AddScoped<RepaymentQueryService>();

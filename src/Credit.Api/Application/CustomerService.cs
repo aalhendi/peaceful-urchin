@@ -5,25 +5,26 @@ namespace Credit.Api.Application;
 
 internal sealed record CreditActor(InstitutionKind Kind, IReadOnlySet<string> Permissions)
 {
-    public bool MayCheckLoanEligibility =>
+    public bool MayFindCustomer =>
+        Permissions.Contains("Customer.Read") ||
         Kind == InstitutionKind.Bank && Permissions.Contains("Loan.Create") ||
         Kind == InstitutionKind.Cinet && Permissions.Contains("Loan.Block");
 }
 
-internal sealed record EligibilityKnown(bool Eligible);
+internal sealed record CustomerFound;
 
 internal sealed record CustomerMissing;
 
-internal sealed record EligibilityForbidden;
+internal sealed record CustomerLookupForbidden;
 
-internal union EligibilityOutcome(EligibilityKnown, CustomerMissing, EligibilityForbidden);
+internal union CustomerLookupOutcome(CustomerFound, CustomerMissing, CustomerLookupForbidden);
 
 internal sealed class CustomerService(ICustomerStore store)
 {
-    public async Task<EligibilityOutcome> CheckLoanEligibilityAsync(CreditActor actor, CivilId customerId)
+    public async Task<CustomerLookupOutcome> FindCustomerAsync(CreditActor actor, CivilId customerId)
     {
-        if (!actor.MayCheckLoanEligibility) return new EligibilityForbidden();
+        if (!actor.MayFindCustomer) return new CustomerLookupForbidden();
         var customer = await store.FindAsync(customerId);
-        return customer is null ? new CustomerMissing() : new EligibilityKnown(customer.LoanEligible);
+        return customer is null ? new CustomerMissing() : new CustomerFound();
     }
 }

@@ -9,8 +9,8 @@ internal static class CreditHandlers
 {
     internal static string Live() => "alive";
 
-    internal static async Task<IResult> CheckEligibilityAsync(
-        EligibilityRequest request, HttpContext context, AccessActorClient access, CustomerService service)
+    internal static async Task<IResult> LookupCustomerAsync(
+        CustomerLookupRequest request, HttpContext context, AccessActorClient access, CustomerService service)
     {
         if (context.Request.Headers.Authorization.Count != 1)
             return Unauthorized(context);
@@ -32,11 +32,11 @@ internal static class CreditHandlers
             return Results.BadRequest("Invalid customer Civil ID.");
 
         context.Response.Headers.CacheControl = "no-store";
-        return await service.CheckLoanEligibilityAsync(resolved.Actor, customerId) switch
+        return await service.FindCustomerAsync(resolved.Actor, customerId) switch
         {
-            EligibilityKnown known => Results.Ok(new EligibilityResponse(known.Eligible)),
+            CustomerFound => Results.NoContent(),
             CustomerMissing => Results.NotFound(),
-            EligibilityForbidden => Results.StatusCode(403)
+            CustomerLookupForbidden => Results.StatusCode(403)
         };
     }
 

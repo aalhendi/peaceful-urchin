@@ -12,15 +12,15 @@ internal sealed class CustomerStore(NpgsqlDataSource dataSource) : ICustomerStor
     {
         await using var connection = await dataSource.OpenConnectionAsync();
         var row = await connection.QuerySingleOrDefaultAsync<CustomerRow>("""
-                                                                          SELECT civil_id AS "CivilId", loan_eligible AS "LoanEligible"
+                                                                          SELECT civil_id AS "CivilId"
                                                                           FROM customers WHERE civil_id = @CustomerId
                                                                           """,
             new { CustomerId = customerId.ExposeSecret() });
         if (row is null) return null;
         var id = CivilId.Parse(row.CivilId).Value as CivilId
                  ?? throw new InvalidOperationException("Stored customer Civil ID is invalid.");
-        return new Customer(id, row.LoanEligible);
+        return new Customer(id);
     }
 
-    private sealed record CustomerRow(string CivilId, bool LoanEligible);
+    private sealed record CustomerRow(string CivilId);
 }

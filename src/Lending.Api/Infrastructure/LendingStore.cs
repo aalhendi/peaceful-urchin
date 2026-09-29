@@ -74,6 +74,17 @@ internal sealed class LendingStore(NpgsqlDataSource dataSource) : ILendingStore
         await transaction.CommitAsync();
     }
 
+    public async Task<bool> IsCustomerBlockedAsync(CivilId customerId)
+    {
+        await using var connection = await dataSource.OpenConnectionAsync();
+        var blocked = await connection.QuerySingleOrDefaultAsync<bool?>("""
+                                                                        SELECT blocked FROM customer_loan_blocks
+                                                                        WHERE customer_civil_id = @CustomerId
+                                                                        """,
+            new { CustomerId = customerId.ExposeSecret() });
+        return blocked ?? false;
+    }
+
     private static async Task EnsureLoanBlockRowAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, CivilId customerId) =>
         await connection.ExecuteAsync("""

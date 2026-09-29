@@ -25,6 +25,13 @@ internal sealed class SetLoanBlockRequest
     public bool? Blocked { get; init; }
 }
 
+internal sealed class CheckLoanEligibilityRequest
+{
+    public string? CustomerCivilId { get; init; }
+}
+
+internal sealed record LoanEligibilityResponse(bool Eligible);
+
 internal sealed class UploadPaymentsRequest
 {
     public PaymentRequest?[]? Payments { get; init; }

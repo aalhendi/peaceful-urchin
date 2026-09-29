@@ -3,6 +3,10 @@ CREATE TABLE customer_loan_blocks (
     blocked boolean NOT NULL DEFAULT false
 );
 
+-- NOTE(aalhendi): Seed one demo block as initial state.
+INSERT INTO customer_loan_blocks (customer_civil_id, blocked)
+VALUES ('304022900002', true);
+
 CREATE TABLE loan_block_changes (
     id uuid PRIMARY KEY,
     customer_civil_id text NOT NULL REFERENCES customer_loan_blocks (customer_civil_id),

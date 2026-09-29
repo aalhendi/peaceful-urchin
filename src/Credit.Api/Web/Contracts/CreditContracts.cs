@@ -1,8 +1,6 @@
 namespace Credit.Api.Web.Contracts;
 
-internal sealed class EligibilityRequest
+internal sealed class CustomerLookupRequest
 {
     public string? CustomerCivilId { get; init; }
 }
-
-internal sealed record EligibilityResponse(bool Eligible);
