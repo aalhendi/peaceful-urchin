@@ -3,5 +3,6 @@
   - Lookups? Genuinely useful case of caching. Institutions, currencies etc.
 - Gateway? Service discovery?
 - Workflows? Model the business processes.
+- Audit customer name changes so we know who changed a shared name and when.
 - Docstrings? Not a fan till code is locked down
 - establish some form of glossary for our language and terminology

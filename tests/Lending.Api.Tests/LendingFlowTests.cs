@@ -18,7 +18,7 @@ namespace Lending.Api.Tests;
 
 public sealed class LendingFlowTests
 {
-    private const string CustomerId = "180010100006";
+    private const string CustomerId = "296051500019";
     private const string SecondCustomerId = "304022900002";
     private const string UnknownCustomerId = "180010100014";
 
@@ -107,6 +107,66 @@ public sealed class LendingFlowTests
         Assert.Equal(HttpStatusCode.NoContent, creditAfter.StatusCode);
         Assert.True((await ReadEligibilityAsync(eligibilityAfter)).Eligible);
         Assert.Equal(0, await app.CountLoansAsync());
+    }
+
+    [Fact]
+    public async Task CreditReadsCustomerProfiles()
+    {
+        await using var app = await TestApp.StartAsync();
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+
+        using var profile = await ReadCustomerProfileAsync(app.CreditClient, bankToken, SecondCustomerId);
+        using var missing = await ReadCustomerProfileAsync(app.CreditClient, bankToken, UnknownCustomerId);
+        using var withoutToken = await ReadCustomerProfileAsync(app.CreditClient, null, CustomerId);
+        using var invalid = await ReadCustomerProfileAsync(app.CreditClient, bankToken, "invalid");
+
+        Assert.Equal(HttpStatusCode.OK, profile.StatusCode);
+        Assert.Equal("no-store", profile.Headers.CacheControl?.ToString());
+        var customer = Assert.IsType<CustomerProfileReceipt>(
+            await profile.Content.ReadFromJsonAsync<CustomerProfileReceipt>(
+                TestContext.Current.CancellationToken));
+        Assert.Equal(SecondCustomerId, customer.CustomerCivilId);
+        Assert.Equal("Demo Customer Two", customer.Name);
+        Assert.Equal(new DateOnly(2004, 2, 29), customer.DateOfBirth);
+        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, withoutToken.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+    }
+
+    [Fact]
+    public async Task CustomerWriterCanUpdateNamesAfterRoleChange()
+    {
+        await using var app = await TestApp.StartAsync();
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+        var bank = await ActorAsync(app.AccessClient, bankToken);
+
+        using var denied = await UpdateCustomerNameAsync(app.CreditClient, bankToken, CustomerId, "New Name");
+        using var roleChange = new HttpRequestMessage(HttpMethod.Put, $"/staff-users/{bank.ActorId}/roles");
+        roleChange.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cinetToken);
+        roleChange.Content = JsonContent.Create(new
+            { Roles = new[] { "CustomerReader", "CustomerWriter", "LoanCreator", "PaymentWriter" } });
+        using var granted = await app.AccessClient.SendAsync(roleChange, TestContext.Current.CancellationToken);
+        using var invalid = await UpdateCustomerNameAsync(app.CreditClient, bankToken, CustomerId, "   ");
+        using var updated =
+            await UpdateCustomerNameAsync(app.CreditClient, bankToken, CustomerId, "  Updated Name  ");
+        using var missingUpdate = await UpdateCustomerNameAsync(app.CreditClient, bankToken, UnknownCustomerId,
+            "New Demo Customer");
+        using var profile = await ReadCustomerProfileAsync(app.CreditClient, bankToken, CustomerId);
+        using var missingProfile = await ReadCustomerProfileAsync(app.CreditClient, bankToken, UnknownCustomerId);
+        using var missingEligibility = await CheckEligibilityAsync(app.LendingClient, bankToken, UnknownCustomerId);
+        var currentProfile = await ReadProfileAsync(profile);
+
+        Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, granted.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, updated.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, missingUpdate.StatusCode);
+        Assert.Equal(CustomerId, currentProfile.CustomerCivilId);
+        Assert.Equal("Updated Name", currentProfile.Name);
+        Assert.Equal(new DateOnly(1996, 5, 15), currentProfile.DateOfBirth);
+        Assert.Equal(HttpStatusCode.NotFound, missingProfile.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, missingEligibility.StatusCode);
     }
 
     [Fact]
@@ -453,6 +513,11 @@ public sealed class LendingFlowTests
         Assert.True(creditDocument.RootElement.GetProperty("paths")
             .GetProperty("/customers/lookup").GetProperty("post")
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        var profileRoute = creditDocument.RootElement.GetProperty("paths").GetProperty("/customers/profile");
+        Assert.True(profileRoute.GetProperty("query").GetProperty("security")[0]
+            .TryGetProperty("Bearer", out _));
+        Assert.True(profileRoute.GetProperty("post").GetProperty("security")[0]
+            .TryGetProperty("Bearer", out _));
     }
 
     private static async Task<string> LoginAsync(HttpClient client, string username, string password)
@@ -552,6 +617,31 @@ public sealed class LendingFlowTests
         return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
+    private static async Task<HttpResponseMessage> ReadCustomerProfileAsync(
+        HttpClient client, string? token, string customerId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Query, "/customers/profile");
+        if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { CustomerCivilId = customerId });
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<HttpResponseMessage> UpdateCustomerNameAsync(
+        HttpClient client, string token, string customerId, string name)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/customers/profile");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { CustomerCivilId = customerId, Name = name });
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<CustomerProfileReceipt> ReadProfileAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<CustomerProfileReceipt>(await response.Content.ReadFromJsonAsync<CustomerProfileReceipt>(
+            TestContext.Current.CancellationToken));
+    }
+
     private sealed record LoginReceipt(string AccessToken);
 
     private sealed record ActorReceipt(Guid ActorId, Guid InstitutionId);
@@ -559,6 +649,8 @@ public sealed class LendingFlowTests
     private sealed record LoanReceipt(Guid Id);
 
     private sealed record EligibilityReceipt(bool Eligible);
+
+    private sealed record CustomerProfileReceipt(string CustomerCivilId, string Name, DateOnly DateOfBirth);
 
     private sealed record InstallmentBody(DateOnly DueDate, decimal AmountKwd);
 

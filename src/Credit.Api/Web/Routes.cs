@@ -1,3 +1,4 @@
+using Credit.Api.Web.Contracts;
 using Microsoft.AspNetCore.OpenApi;
 using Microsoft.OpenApi;
 
@@ -12,6 +13,26 @@ internal static class Routes
 
         app.MapGet("/health/live", CreditHandlers.Live);
         app.MapPost("/customers/lookup", CreditHandlers.LookupCustomerAsync)
+            .DocumentBearerToken()
+            .Produces(204)
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(503);
+
+        // NOTE(aalhendi): QUERY keeps the Civil ID in the body and marks this as a safe read.
+        // TODO(aalhendi): Not all HTTP Clients support QUERY. Can add a deprecated fallback. Depends on SLA
+        app.MapMethods("/customers/profile", ["QUERY"], CreditHandlers.ReadProfileAsync)
+            .DocumentBearerToken()
+            .Produces<CustomerProfileResponse>()
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(404)
+            .Produces(503);
+
+        app.MapPost("/customers/profile", CreditHandlers.UpdateCustomerNameAsync)
             .DocumentBearerToken()
             .Produces(204)
             .Produces(400)

@@ -6,4 +6,5 @@ namespace Credit.Api.Application;
 internal interface ICustomerStore
 {
     Task<Customer?> FindAsync(CivilId customerId);
+    Task<bool> UpdateNameAsync(CivilId customerId, CustomerName name);
 }

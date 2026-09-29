@@ -2,7 +2,10 @@ using Shared.Vocabulary;
 
 namespace Credit.Api.Domain;
 
-internal sealed record Customer(CivilId Id);
+internal sealed record Customer(CivilId Id, CustomerName Name)
+{
+    public DateOnly DateOfBirth => Id.DateOfBirth;
+}
 
 internal sealed record InstitutionKind
 {

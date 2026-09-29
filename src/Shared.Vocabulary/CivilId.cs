@@ -2,9 +2,12 @@ namespace Shared.Vocabulary;
 
 public sealed record CivilId : SensitiveString
 {
-    private CivilId(string value) : base(value)
+    private CivilId(string value, DateOnly dateOfBirth) : base(value)
     {
+        DateOfBirth = dateOfBirth;
     }
+
+    public DateOnly DateOfBirth { get; }
 
     public static ParseResult<CivilId> Parse(string? value)
     {
@@ -15,13 +18,14 @@ public sealed record CivilId : SensitiveString
             if (!char.IsAsciiDigit(digit))
                 return new ParseError("Civil ID must contain only ASCII digits.");
 
-        if (!HasValidBirthDate(value)) return new ParseError("Civil ID contains an invalid birth date.");
+        if (ReadBirthDate(value) is not DateOnly dateOfBirth)
+            return new ParseError("Civil ID contains an invalid birth date.");
         if (!HasValidChecksum(value)) return new ParseError("Civil ID has an invalid checksum.");
 
-        return new CivilId(value);
+        return new CivilId(value, dateOfBirth);
     }
 
-    private static bool HasValidBirthDate(string value)
+    private static DateOnly? ReadBirthDate(string value)
     {
         var century = value[0] switch
         {
@@ -30,13 +34,15 @@ public sealed record CivilId : SensitiveString
             '3' => 2000,
             _ => 0
         };
-        if (century == 0) return false;
+        if (century == 0) return null;
 
         var year = century + (value[1] - '0') * 10 + (value[2] - '0');
         var month = (value[3] - '0') * 10 + (value[4] - '0');
         var day = (value[5] - '0') * 10 + (value[6] - '0');
 
-        return month is >= 1 and <= 12 && day >= 1 && day <= DateTime.DaysInMonth(year, month);
+        return month is >= 1 and <= 12 && day >= 1 && day <= DateTime.DaysInMonth(year, month)
+            ? new DateOnly(year, month, day)
+            : null;
     }
 
     private static bool HasValidChecksum(string value)

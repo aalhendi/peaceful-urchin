@@ -6,7 +6,7 @@
 flowchart LR
     staff["Bank and CINET staff"] -->|Login, check actor, manage roles| access["Access API"]
     staff -->|Create loans, block loans, check eligibility, upload payments, read repayments| lending["Lending API"]
-    staff -->|Look up customers| credit["Credit API"]
+    staff -->|Read customer profiles and update names| credit["Credit API"]
 
     lending -->|Validate session and get current permissions| access
     credit -->|Validate session and get current permissions| access
