@@ -8,7 +8,7 @@ namespace Lending.Api.Infrastructure;
 
 internal sealed class ActiveLoanTotalStore(NpgsqlDataSource dataSource) : IActiveLoanTotalStore
 {
-    public async Task<ActiveLoanTotal> ReadAsync(CivilId customerId, LendingActor actor)
+    public async Task<ActiveLoanTotal> ReadAsync(CivilId customerId, LendingActor actor, DateOnly today)
     {
         await using var connection = await dataSource.OpenConnectionAsync();
         var row = await connection.QuerySingleAsync<TotalRow>("""
@@ -17,6 +17,7 @@ internal sealed class ActiveLoanTotalStore(NpgsqlDataSource dataSource) : IActiv
                                                               FROM loans
                                                               WHERE loans.customer_civil_id = @CustomerId
                                                                 AND loans.status = 'Open'
+                                                                AND loans.start_date <= @Today
                                                                 AND (@IsCinet OR loans.institution_id = @InstitutionId)
                                                                 AND NOT EXISTS (
                                                                     SELECT 1 FROM loan_litigations
@@ -25,6 +26,7 @@ internal sealed class ActiveLoanTotalStore(NpgsqlDataSource dataSource) : IActiv
                                                               """, new
         {
             CustomerId = customerId.ExposeSecret(),
+            Today = today,
             IsCinet = actor.InstitutionKind == InstitutionKind.Cinet,
             InstitutionId = actor.InstitutionId.Value
         });

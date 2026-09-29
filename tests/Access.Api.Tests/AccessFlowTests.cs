@@ -24,14 +24,16 @@ public sealed class AccessFlowTests
         Assert.NotEqual(bank.InstitutionId, cinet.InstitutionId);
         Assert.Equal("Bank", bank.InstitutionKind);
         Assert.Equal("CINET", cinet.InstitutionKind);
-        Assert.Equal(["CustomerReader", "LitigationReader", "LoanCreator", "PaymentWriter"], bank.Roles);
-        Assert.Equal(["Customer.Read", "Litigation.Read", "Loan.Create", "Payment.Write"], bank.Permissions);
+        Assert.Equal(["CreditAnalyst", "CustomerReader", "LitigationReader", "LoanCreator", "PaymentWriter"],
+            bank.Roles);
+        Assert.Equal(["CreditGrade.Read", "Customer.Read", "Litigation.Read", "Loan.Create", "Payment.Write"],
+            bank.Permissions);
         Assert.Equal([
             "AccessAdmin", "CreditAnalyst", "CustomerReader", "LitigationReader", "LitigationWriter",
             "LoanBlocker"
         ], cinet.Roles);
         Assert.Equal([
-            "StaffRoles.Change", "Credit.Read", "Customer.Read", "Litigation.Read", "Litigation.Write",
+            "StaffRoles.Change", "CreditGrade.Read", "Customer.Read", "Litigation.Read", "Litigation.Write",
             "Loan.Block"
         ], cinet.Permissions);
     }

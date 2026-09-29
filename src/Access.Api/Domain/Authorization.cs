@@ -29,7 +29,7 @@ internal sealed record StaffRole
     public static readonly StaffRole LoanCreator = new("LoanCreator", "Loan.Create");
     public static readonly StaffRole LoanBlocker = new("LoanBlocker", "Loan.Block");
     public static readonly StaffRole PaymentWriter = new("PaymentWriter", "Payment.Write");
-    public static readonly StaffRole CreditAnalyst = new("CreditAnalyst", "Credit.Read");
+    public static readonly StaffRole CreditAnalyst = new("CreditAnalyst", "CreditGrade.Read");
     public static readonly StaffRole AccessAdmin = new("AccessAdmin", "StaffRoles.Change");
 
     private StaffRole(string code, string permission)
@@ -44,7 +44,7 @@ internal sealed record StaffRole
     public bool IsAllowedFor(InstitutionKind kind)
     {
         if (this == LoanCreator || this == PaymentWriter) return kind == InstitutionKind.Bank;
-        if (this == CreditAnalyst || this == AccessAdmin || this == LoanBlocker || this == LitigationWriter)
+        if (this == AccessAdmin || this == LoanBlocker || this == LitigationWriter)
             return kind == InstitutionKind.Cinet;
         return true;
     }

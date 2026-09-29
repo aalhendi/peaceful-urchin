@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
     staff["Bank and CINET staff"] -->|Login, check actor, manage roles| access["Access API"]
-    staff -->|Create loans, manage court cases, block loans, check eligibility, upload payments, read loan totals and repayments| lending["Lending API"]
+    staff -->|Create loans, manage court cases, block loans, check eligibility, upload payments, read loan totals, repayments and credit grades| lending["Lending API"]
     staff -->|Read customer profiles and update names| credit["Credit API"]
 
     lending -->|Validate session and get current permissions| access
@@ -42,6 +42,17 @@ When a bank creates a loan, Lending asks Credit whether the customer exists. Len
 | Repayment schedule / installment | The bank's expected payments: one installment per month for the loan's tenor. Each installment has a due date and a positive KWD amount. |
 | Payment | Money the bank reports receiving against one of its loans. A bank's payment reference identifies a report so an identical retry does not create another payment. |
 | Court case | A court reference recorded against one loan. Pending -> current. Innocent or Guilty is a dated verdict. The customer and bank come from the loan. |
-| Active loan total | The count and original principal sum of open loans without a pending court case. A bank sees its own loans while CINET sees all banks' loans. |
+| Active loan total | The count and original principal sum of started, open loans without a pending court case. A bank sees its own loans while CINET sees all banks' loans. |
 | Delinquent loan | An open loan with an overdue amount greater than zero. An installment becomes overdue the day after its due date. Payments cover the oldest unpaid installments first, including future ones.|
 | Next due payment | The oldest unpaid installment across the customer's visible open loans, including an installment already overdue. |
+| Credit grade | A customer-wide A, B, C, or F result calculated from loans, overdue payments, and court verdicts. A pending case can instead return PendingReview. |
+
+## Credit grade
+
+Lending calculates the grade when an authorized staff member asks for it. Banks and CINET can read the grade across all banks, but a bank cannot use the grade endpoint to read another bank's loans or court cases. The response contains only the grade and the date used for the calculation.
+
+For the grade and active-loan total, a loan becomes active on its start date while its status is Open. A loan created for a future start date does not count yet.
+
+F takes priority when more than three open loans are delinquent, or when a loan has a recent Guilty verdict. A verdict remains recent for three years when the loan's original principal is **greater than** KWD 10,000; for KWD 10,000 or less, it remains recent for one year. The window ends on the verdict's anniversary.
+
+Otherwise, a pending court case returns PendingReview. Without one, one to three delinquent loans give C. With no delinquencies, at least one open loan gives A; zero open loans gives B. The task gives no letter grade for a pending case, so PendingReview makes that gap visible instead of guessing.

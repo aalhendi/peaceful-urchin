@@ -354,6 +354,7 @@ public sealed class LendingFlowTests
     public async Task ActiveLoanTotalScopesBanksAndRequiresCustomerRead()
     {
         await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
         await app.SeedSecondBankAsync();
         var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
         var otherBankToken = await LoginAsync(app.AccessClient, "bank-b@example.test", "bank-local");
@@ -706,6 +707,214 @@ public sealed class LendingFlowTests
     }
 
     [Fact]
+    public async Task FutureLoanBecomesActiveOnItsStartDate()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 9, 30));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+
+        using var created = await CreateLoanAsync(app.LendingClient, bankToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using var beforeStart = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var beforeTotal = await ReadActiveLoanTotalReceiptAsync(beforeStart);
+        Assert.Equal(0, beforeTotal.LoanCount);
+        Assert.Equal(0m, beforeTotal.OriginalPrincipalTotalKwd);
+        Assert.Equal("B", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+
+        app.SetKuwaitDate(new DateOnly(2026, 10, 1));
+        using var onStart = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var activeTotal = await ReadActiveLoanTotalReceiptAsync(onStart);
+        Assert.Equal(1, activeTotal.LoanCount);
+        Assert.Equal(1000.125m, activeTotal.OriginalPrincipalTotalKwd);
+        Assert.Equal("A", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+    }
+
+    [Fact]
+    public async Task CreditGradeUsesCustomerWideLoansAndPendingCases()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        await app.SeedSecondBankAsync();
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var otherBankToken = await LoginAsync(app.AccessClient, "bank-b@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+
+        using var noLoans = await ReadCreditGradeAsync(app.LendingClient, otherBankToken);
+        Assert.Equal("B", (await ReadCreditGradeReceiptAsync(noLoans)).Grade);
+        using var unknown = await ReadCreditGradeAsync(app.LendingClient, otherBankToken, UnknownCustomerId);
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+
+        using var created = await CreateLoanAsync(app.LendingClient, bankToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var loan = Assert.IsType<LoanReceipt>(await created.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+        using var active = await ReadCreditGradeAsync(app.LendingClient, otherBankToken);
+        Assert.Equal("A", (await ReadCreditGradeReceiptAsync(active)).Grade);
+        Assert.Equal("no-store", active.Headers.CacheControl?.ToString());
+
+        using var opened = await OpenLitigationAsync(app.LendingClient, cinetToken, loan.Id, "KUW/GRADE/001");
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        var litigation = Assert.IsType<LitigationOpenedReceipt>(
+            await opened.Content.ReadFromJsonAsync<LitigationOpenedReceipt>(TestContext.Current.CancellationToken));
+        using var pending = await ReadCreditGradeAsync(app.LendingClient, otherBankToken);
+        Assert.Equal("PendingReview", (await ReadCreditGradeReceiptAsync(pending)).Grade);
+        using var hiddenCase = await ReadLitigationAsync(app.LendingClient, otherBankToken, loan.Id);
+        Assert.Equal(HttpStatusCode.NotFound, hiddenCase.StatusCode);
+
+        using var verdict = await RecordVerdictAsync(app.LendingClient, cinetToken, litigation.LitigationId,
+            "Innocent", new DateOnly(2026, 10, 10));
+        Assert.Equal(HttpStatusCode.NoContent, verdict.StatusCode);
+        app.SetKuwaitDate(new DateOnly(2026, 11, 1));
+        using var dueToday = await ReadCreditGradeAsync(app.LendingClient, otherBankToken);
+        Assert.Equal("A", (await ReadCreditGradeReceiptAsync(dueToday)).Grade);
+        app.SetKuwaitDate(new DateOnly(2026, 11, 2));
+        using var overdue = await ReadCreditGradeAsync(app.LendingClient, otherBankToken);
+        var overdueGrade = await ReadCreditGradeReceiptAsync(overdue);
+        Assert.Equal("C", overdueGrade.Grade);
+        Assert.Equal(new DateOnly(2026, 11, 2), overdueGrade.AsOfDate);
+
+        using var paid = await UploadPaymentsAsync(app.LendingClient, bankToken,
+            [new PaymentBody(loan.Id, new DateOnly(2026, 11, 2), 50m, "grade-p-1")]);
+        Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+        using var caughtUp = await ReadCreditGradeAsync(app.LendingClient, otherBankToken);
+        Assert.Equal("A", (await ReadCreditGradeReceiptAsync(caughtUp)).Grade);
+    }
+
+    [Fact]
+    public async Task CreditGradePermissionIsIndependentOfCustomerRead()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+        var bank = await ActorAsync(app.AccessClient, bankToken);
+
+        using var gradeOnlyChange = await ReplaceRolesAsync(app.AccessClient, cinetToken, bank.ActorId,
+            ["CreditAnalyst"]);
+        Assert.Equal(HttpStatusCode.NoContent, gradeOnlyChange.StatusCode);
+        using var gradeOnly = await ReadCreditGradeAsync(app.LendingClient, bankToken);
+        Assert.Equal("B", (await ReadCreditGradeReceiptAsync(gradeOnly)).Grade);
+        using var profile = await ReadCustomerProfileAsync(app.CreditClient, bankToken, CustomerId);
+        Assert.Equal(HttpStatusCode.Forbidden, profile.StatusCode);
+
+        using var customerOnlyChange = await ReplaceRolesAsync(app.AccessClient, cinetToken, bank.ActorId,
+            ["CustomerReader"]);
+        Assert.Equal(HttpStatusCode.NoContent, customerOnlyChange.StatusCode);
+        using var forbidden = await ReadCreditGradeAsync(app.LendingClient, bankToken);
+        using var missingToken = await ReadCreditGradeAsync(app.LendingClient, null);
+        using var invalidId = await ReadCreditGradeAsync(app.LendingClient, cinetToken, "invalid");
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, missingToken.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidId.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreditGradeUsesPrincipalThresholdAndExactVerdictAnniversaries()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+        using var unblocked = await SetBlockAsync(app.LendingClient, cinetToken, false, SecondCustomerId);
+        Assert.Equal(HttpStatusCode.NoContent, unblocked.StatusCode);
+
+        using var highCreated = await CreateLoanAsync(app.LendingClient, bankToken, LoanBody(CustomerId, 10000.001m));
+        using var edgeCreated = await CreateLoanAsync(app.LendingClient, bankToken, LoanBody(SecondCustomerId, 10000m));
+        Assert.Equal(HttpStatusCode.Created, highCreated.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, edgeCreated.StatusCode);
+        var highLoan = Assert.IsType<LoanReceipt>(await highCreated.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+        var edgeLoan = Assert.IsType<LoanReceipt>(await edgeCreated.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+        using var highOpened = await OpenLitigationAsync(app.LendingClient, cinetToken, highLoan.Id, "KUW/GRADE/HIGH");
+        using var edgeOpened = await OpenLitigationAsync(app.LendingClient, cinetToken, edgeLoan.Id, "KUW/GRADE/EDGE");
+        Assert.Equal(HttpStatusCode.Created, highOpened.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, edgeOpened.StatusCode);
+        var highCase = Assert.IsType<LitigationOpenedReceipt>(
+            await highOpened.Content.ReadFromJsonAsync<LitigationOpenedReceipt>(
+                TestContext.Current.CancellationToken));
+        var edgeCase = Assert.IsType<LitigationOpenedReceipt>(
+            await edgeOpened.Content.ReadFromJsonAsync<LitigationOpenedReceipt>(
+                TestContext.Current.CancellationToken));
+        using var highVerdict = await RecordVerdictAsync(app.LendingClient, cinetToken, highCase.LitigationId,
+            "Guilty", new DateOnly(2026, 10, 10));
+        using var edgeVerdict = await RecordVerdictAsync(app.LendingClient, cinetToken, edgeCase.LitigationId,
+            "Guilty", new DateOnly(2026, 10, 10));
+        Assert.Equal(HttpStatusCode.NoContent, highVerdict.StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, edgeVerdict.StatusCode);
+        using var paid = await UploadPaymentsAsync(app.LendingClient, bankToken,
+        [
+            new PaymentBody(highLoan.Id, new DateOnly(2026, 10, 10), 1200m, "grade-high-paid"),
+            new PaymentBody(edgeLoan.Id, new DateOnly(2026, 10, 10), 1200m, "grade-edge-paid")
+        ]);
+        Assert.Equal(HttpStatusCode.OK, paid.StatusCode);
+
+        app.SetKuwaitDate(new DateOnly(2027, 10, 9));
+        Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+        Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, SecondCustomerId));
+        app.SetKuwaitDate(new DateOnly(2027, 10, 10));
+        Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+        Assert.Equal("A", await GradeAsync(app.LendingClient, bankToken, SecondCustomerId));
+        app.SetKuwaitDate(new DateOnly(2029, 10, 9));
+        Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+        app.SetKuwaitDate(new DateOnly(2029, 10, 10));
+        Assert.Equal("A", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+    }
+
+    [Fact]
+    public async Task CreditGradeCountsDelinquentLoansAndGivesFPrecedence()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+        var loans = new List<Guid>();
+        for (var index = 0; index < 4; index++)
+        {
+            using var created = await CreateLoanAsync(app.LendingClient, bankToken);
+            Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+            loans.Add(Assert.IsType<LoanReceipt>(await created.Content.ReadFromJsonAsync<LoanReceipt>(
+                TestContext.Current.CancellationToken)).Id);
+        }
+
+        app.SetKuwaitDate(new DateOnly(2026, 11, 2));
+        Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+        using var opened = await OpenLitigationAsync(app.LendingClient, cinetToken, loans[0], "KUW/GRADE/PENDING");
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        var litigation = Assert.IsType<LitigationOpenedReceipt>(
+            await opened.Content.ReadFromJsonAsync<LitigationOpenedReceipt>(TestContext.Current.CancellationToken));
+        Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+
+        using var paidOne = await UploadPaymentsAsync(app.LendingClient, bankToken,
+            [new PaymentBody(loans[0], new DateOnly(2026, 11, 2), 50m, "grade-count-1")]);
+        Assert.Equal(HttpStatusCode.OK, paidOne.StatusCode);
+        Assert.Equal("PendingReview", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+        using var innocent = await RecordVerdictAsync(app.LendingClient, cinetToken, litigation.LitigationId,
+            "Innocent", new DateOnly(2026, 11, 2));
+        Assert.Equal(HttpStatusCode.NoContent, innocent.StatusCode);
+        Assert.Equal("C", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+        using var paidRest = await UploadPaymentsAsync(app.LendingClient, bankToken,
+        [
+            new PaymentBody(loans[1], new DateOnly(2026, 11, 2), 50m, "grade-count-2"),
+            new PaymentBody(loans[2], new DateOnly(2026, 11, 2), 50m, "grade-count-3"),
+            new PaymentBody(loans[3], new DateOnly(2026, 11, 2), 50m, "grade-count-4")
+        ]);
+        Assert.Equal(HttpStatusCode.OK, paidRest.StatusCode);
+        Assert.Equal("A", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+    }
+
+    [Fact]
+    public async Task CreditGradeFailsClosedWhenCreditIsUnavailable()
+    {
+        await using var app = await TestApp.StartAsync(creditUnavailable: true);
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+
+        using var response = await ReadCreditGradeAsync(app.LendingClient, bankToken);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+    }
+
+    [Fact]
     public async Task OpenApiDocumentsProtectedLendingRoutes()
     {
         await using var app = await TestApp.StartAsync();
@@ -729,6 +938,12 @@ public sealed class LendingFlowTests
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
         Assert.True(paths.GetProperty("/customers/loans/active-total").GetProperty("post")
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        Assert.True(paths.GetProperty("/customers/credit-grade").GetProperty("post")
+            .GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        var gradeSchema = document.RootElement.GetProperty("components").GetProperty("schemas")
+            .GetProperty("CreditGradeValue");
+        Assert.Equal(["A", "B", "C", "F", "PendingReview"],
+            gradeSchema.GetProperty("enum").EnumerateArray().Select(value => value.GetString()));
         var litigationRoute = paths.GetProperty("/loans/{loanId}/litigations");
         Assert.True(litigationRoute.GetProperty("post").GetProperty("security")[0]
             .TryGetProperty("Bearer", out _));
@@ -840,6 +1055,37 @@ public sealed class LendingFlowTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return Assert.IsType<ActiveLoanTotalReceipt>(await response.Content.ReadFromJsonAsync<ActiveLoanTotalReceipt>(
             TestContext.Current.CancellationToken));
+    }
+
+    private static async Task<HttpResponseMessage> ReadCreditGradeAsync(
+        HttpClient client, string? token, string customerId = CustomerId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/customers/credit-grade");
+        if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { CustomerCivilId = customerId });
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<CreditGradeReceipt> ReadCreditGradeReceiptAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<CreditGradeReceipt>(await response.Content.ReadFromJsonAsync<CreditGradeReceipt>(
+            TestContext.Current.CancellationToken));
+    }
+
+    private static async Task<string> GradeAsync(HttpClient client, string token, string customerId)
+    {
+        using var response = await ReadCreditGradeAsync(client, token, customerId);
+        return (await ReadCreditGradeReceiptAsync(response)).Grade;
+    }
+
+    private static async Task<HttpResponseMessage> ReplaceRolesAsync(
+        HttpClient client, string token, Guid userId, string[] roles)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Put, $"/staff-users/{userId}/roles");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { Roles = roles });
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
     }
 
     private static async Task<HttpResponseMessage> CheckEligibilityAsync(
@@ -963,6 +1209,8 @@ public sealed class LendingFlowTests
 
     private sealed record ActiveLoanTotalReceipt(long LoanCount, decimal OriginalPrincipalTotalKwd);
 
+    private sealed record CreditGradeReceipt(string Grade, DateOnly AsOfDate);
+
     private sealed record DelinquentLoanReceipt(Guid LoanId, decimal OverdueAmountKwd);
 
     private sealed record DuePaymentReceipt(Guid LoanId, DateOnly DueDate, decimal RemainingAmountKwd, bool Overdue);
@@ -1038,7 +1286,8 @@ public sealed class LendingFlowTests
                                           """, new { UserId = userId, InstitutionId = institutionId });
             await connection.ExecuteAsync("""
                                           INSERT INTO staff_user_roles (staff_user_id, role)
-                                          VALUES (@UserId, 'CustomerReader'), (@UserId, 'LitigationReader'),
+                                          VALUES (@UserId, 'CreditAnalyst'), (@UserId, 'CustomerReader'),
+                                                 (@UserId, 'LitigationReader'),
                                                  (@UserId, 'LoanCreator'),
                                                  (@UserId, 'PaymentWriter')
                                           """, new { UserId = userId });

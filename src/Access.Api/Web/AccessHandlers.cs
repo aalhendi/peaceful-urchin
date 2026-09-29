@@ -54,7 +54,7 @@ internal static class AccessHandlers
         if (StaffUserId.Parse(userId).Value is not StaffUserId targetId)
             return Results.BadRequest("Invalid staff user ID.");
         if (request.Roles is null) return Results.BadRequest("Roles are required.");
-        if (request.Roles.Length > 5) return Results.BadRequest("Provide at most five roles.");
+        if (request.Roles.Length > 32) return Results.BadRequest("Provide at most 32 roles.");
 
         var roles = ImmutableArray.CreateBuilder<StaffRole>();
         var seen = new HashSet<StaffRole>();

@@ -7,6 +7,7 @@ internal sealed record CreditActor(InstitutionKind Kind, IReadOnlySet<string> Pe
 {
     public bool MayFindCustomer =>
         Permissions.Contains("Customer.Read") ||
+        Permissions.Contains("CreditGrade.Read") ||
         Kind == InstitutionKind.Bank && Permissions.Contains("Loan.Create") ||
         Kind == InstitutionKind.Cinet && Permissions.Contains("Loan.Block");
 

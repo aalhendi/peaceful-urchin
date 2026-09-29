@@ -8,7 +8,7 @@ WITH demo_users (username, password_hash, institution_code, roles) AS (
     VALUES
         ('bank@example.test',
          'AQAAAAIAAYagAAAAEMeagZKME7HWX2DCyWmFxvTi15RacCUXRuXXJ+odFbad1fHeW6n3qYGPJD87mw8cSA==',
-         'BANK_A', ARRAY['CustomerReader', 'LoanCreator']),
+         'BANK_A', ARRAY['CreditAnalyst', 'CustomerReader', 'LoanCreator']),
         ('cinet@example.test',
          'AQAAAAIAAYagAAAAECq2T05rtkV4mCyKehkwLFD9kpm3bEC0tVF4shF+B0jsuqexphxxg5KG8CY3y6fNyA==',
          'CINET', ARRAY['CreditAnalyst', 'AccessAdmin'])

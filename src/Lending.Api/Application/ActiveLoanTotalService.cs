@@ -11,14 +11,14 @@ internal union ActiveLoanTotalOutcome(ActiveLoanTotalFound, LoanForbidden);
 
 internal interface IActiveLoanTotalStore
 {
-    Task<ActiveLoanTotal> ReadAsync(CivilId customerId, LendingActor actor);
+    Task<ActiveLoanTotal> ReadAsync(CivilId customerId, LendingActor actor, DateOnly today);
 }
 
 internal sealed class ActiveLoanTotalService(IActiveLoanTotalStore store)
 {
-    public async Task<ActiveLoanTotalOutcome> ReadAsync(LendingActor actor, CivilId customerId)
+    public async Task<ActiveLoanTotalOutcome> ReadAsync(LendingActor actor, CivilId customerId, DateOnly today)
     {
         if (!actor.MayReadCustomerLoans) return new LoanForbidden();
-        return new ActiveLoanTotalFound(await store.ReadAsync(customerId, actor));
+        return new ActiveLoanTotalFound(await store.ReadAsync(customerId, actor, today));
     }
 }

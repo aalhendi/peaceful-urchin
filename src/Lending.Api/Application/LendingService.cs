@@ -14,6 +14,7 @@ internal sealed record LendingActor(
     public bool MayReadLoanEligibility => Permissions.Contains("Customer.Read") || MayCreateLoan || MayBlockLoans;
     public bool MayUploadPayments => InstitutionKind == InstitutionKind.Bank && Permissions.Contains("Payment.Write");
     public bool MayReadCustomerLoans => Permissions.Contains("Customer.Read");
+    public bool MayReadCreditGrade => Permissions.Contains("CreditGrade.Read");
     public bool MayReadLitigation => Permissions.Contains("Litigation.Read");
 
     public bool MayWriteLitigation => InstitutionKind == InstitutionKind.Cinet &&
