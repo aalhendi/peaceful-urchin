@@ -587,22 +587,122 @@ public sealed class LendingFlowTests
     }
 
     [Fact]
+    public async Task PayingTheReportedScheduleClosesTheLoanEvenWhenPaidEarly()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+        using var created = await CreateLoanAsync(app.LendingClient, bankToken, new
+        {
+            CustomerCivilId = CustomerId,
+            StartDate = "2026-10-01",
+            TenorMonths = 3,
+            AmountKwd = 90m,
+            RatePercent = 0m,
+            Installments = DemoInstallments(3, 30m)
+        });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var loan = Assert.IsType<LoanReceipt>(await created.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+
+        var firstPayment = new PaymentBody(loan.Id, new DateOnly(2026, 10, 10), 30m, "closure-1");
+        using var partial = await UploadPaymentsAsync(app.LendingClient, bankToken, [firstPayment]);
+        Assert.Equal(HttpStatusCode.OK, partial.StatusCode);
+        Assert.Equal("Open", (await app.FindLoanAsync(loan.Id)).Status);
+
+        var finalPayment = new PaymentBody(loan.Id, new DateOnly(2026, 10, 10), 60m, "closure-2");
+        using var completed = await UploadPaymentsAsync(app.LendingClient, bankToken, [finalPayment]);
+        Assert.Equal(HttpStatusCode.OK, completed.StatusCode);
+        Assert.Equal("Closed", (await app.FindLoanAsync(loan.Id)).Status);
+        using var totalResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        Assert.Equal(0, (await ReadActiveLoanTotalReceiptAsync(totalResponse)).LoanCount);
+        Assert.Equal("B", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+        var summary = await ReadSummaryAsync(app.LendingClient, cinetToken);
+        Assert.Null(summary.NextDuePayment);
+        Assert.Empty(summary.DelinquentLoans);
+        Assert.Equal(2, summary.LastFivePayments.Length);
+
+        using var repeated = await UploadPaymentsAsync(app.LendingClient, bankToken, [finalPayment]);
+        Assert.Equal(HttpStatusCode.OK, repeated.StatusCode);
+        Assert.Equal(2, await app.CountPaymentsAsync());
+        Assert.Equal("Closed", (await app.FindLoanAsync(loan.Id)).Status);
+    }
+
+    [Fact]
+    public async Task ConcurrentPaymentUploadsCloseALoanOnceTheirCombinedAmountCoversTheSchedule()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        using var created = await CreateLoanAsync(app.LendingClient, bankToken, new
+        {
+            CustomerCivilId = CustomerId,
+            StartDate = "2026-10-01",
+            TenorMonths = 1,
+            AmountKwd = 50m,
+            RatePercent = 0m,
+            Installments = DemoInstallments(1, 50m)
+        });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var loan = Assert.IsType<LoanReceipt>(await created.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+
+        await using var connection = new NpgsqlConnection(app.LendingConnectionString);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(TestContext.Current.CancellationToken);
+        await connection.QuerySingleAsync<Guid>("SELECT id FROM loans WHERE id = @Id FOR UPDATE",
+            new { loan.Id }, transaction);
+
+        var firstUpload = UploadPaymentsAsync(app.LendingClient, bankToken,
+            [new PaymentBody(loan.Id, new DateOnly(2026, 10, 10), 25m, "concurrent-1")]);
+        var secondUpload = UploadPaymentsAsync(app.LendingClient, bankToken,
+            [new PaymentBody(loan.Id, new DateOnly(2026, 10, 10), 25m, "concurrent-2")]);
+        await using var observer = new NpgsqlConnection(app.LendingConnectionString);
+        await observer.OpenAsync(TestContext.Current.CancellationToken);
+        var waiters = 0;
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            waiters = await observer.ExecuteScalarAsync<int>("""
+                                                               SELECT count(*) FROM pg_stat_activity
+                                                               WHERE datname = current_database()
+                                                                 AND wait_event_type = 'Lock'
+                                                                 AND query LIKE '%FROM loans%FOR UPDATE%'
+                                                               """);
+            if (waiters == 2) break;
+            await Task.Delay(25, TestContext.Current.CancellationToken);
+        }
+
+        await transaction.CommitAsync(TestContext.Current.CancellationToken);
+        using var first = await firstUpload.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        using var second = await secondUpload.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Equal(2, waiters);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+        Assert.Equal(2, await app.CountPaymentsAsync());
+        Assert.Equal("Closed", (await app.FindLoanAsync(loan.Id)).Status);
+    }
+
+    [Fact]
     public async Task RejectedPaymentBatchesDoNotWriteRows()
     {
         await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 11, 2));
         var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
         var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
         using var created = await CreateLoanAsync(app.LendingClient, bankToken);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var loan = Assert.IsType<LoanReceipt>(await created.Content.ReadFromJsonAsync<LoanReceipt>(
             TestContext.Current.CancellationToken));
-        var payment = new PaymentBody(loan.Id, new DateOnly(2026, 11, 1), 1m, "p-1");
+        var payment = new PaymentBody(loan.Id, new DateOnly(2026, 11, 1), 1200m, "p-1");
 
         using var cinetUpload = await UploadPaymentsAsync(app.LendingClient, cinetToken, [payment]);
         using var partialBatch = await UploadPaymentsAsync(app.LendingClient, bankToken,
             [payment, payment with { LoanId = Guid.NewGuid(), ExternalReference = "missing-loan" }]);
         using var beforeStart = await UploadPaymentsAsync(app.LendingClient, bankToken,
             [payment with { PaymentDate = new DateOnly(2026, 9, 30) }]);
+        using var futurePayment = await UploadPaymentsAsync(app.LendingClient, bankToken,
+            [payment with { PaymentDate = new DateOnly(2026, 11, 3) }]);
         using var nullPaymentRequest = new HttpRequestMessage(HttpMethod.Post, "/payments");
         nullPaymentRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bankToken);
         nullPaymentRequest.Content = JsonContent.Create(new { Payments = new object?[] { null } });
@@ -611,14 +711,17 @@ public sealed class LendingFlowTests
         Assert.Equal(HttpStatusCode.Forbidden, cinetUpload.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, partialBatch.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, beforeStart.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, futurePayment.StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, nullPayment.StatusCode);
         Assert.Equal(0, await app.CountPaymentsAsync());
+        Assert.Equal("Open", (await app.FindLoanAsync(loan.Id)).Status);
     }
 
     [Fact]
     public async Task PaymentReferenceCanBeRetriedButNotReusedForDifferentDetails()
     {
         await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 11, 1));
         var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
         using var created = await CreateLoanAsync(app.LendingClient, bankToken);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
@@ -687,6 +790,7 @@ public sealed class LendingFlowTests
     public async Task RecentPaymentsReturnsFiveNewestByPaymentDate()
     {
         await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 11, 6));
         var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
         var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
         using var created = await CreateLoanAsync(app.LendingClient, bankToken);
@@ -699,7 +803,6 @@ public sealed class LendingFlowTests
             .ToArray();
         using var uploaded = await UploadPaymentsAsync(app.LendingClient, bankToken, sixPayments);
         Assert.Equal(HttpStatusCode.OK, uploaded.StatusCode);
-        app.SetKuwaitDate(new DateOnly(2026, 11, 6));
         var summary = await ReadSummaryAsync(app.LendingClient, cinetToken);
         Assert.Equal(6, await app.CountPaymentsAsync());
         Assert.Equal(["p-6", "p-5", "p-4", "p-3", "p-2"],
@@ -854,11 +957,11 @@ public sealed class LendingFlowTests
         Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, SecondCustomerId));
         app.SetKuwaitDate(new DateOnly(2027, 10, 10));
         Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, CustomerId));
-        Assert.Equal("A", await GradeAsync(app.LendingClient, bankToken, SecondCustomerId));
+        Assert.Equal("B", await GradeAsync(app.LendingClient, bankToken, SecondCustomerId));
         app.SetKuwaitDate(new DateOnly(2029, 10, 9));
         Assert.Equal("F", await GradeAsync(app.LendingClient, bankToken, CustomerId));
         app.SetKuwaitDate(new DateOnly(2029, 10, 10));
-        Assert.Equal("A", await GradeAsync(app.LendingClient, bankToken, CustomerId));
+        Assert.Equal("B", await GradeAsync(app.LendingClient, bankToken, CustomerId));
     }
 
     [Fact]

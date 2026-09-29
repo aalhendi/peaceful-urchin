@@ -13,18 +13,22 @@ internal sealed class PaymentStore(NpgsqlDataSource dataSource) : IPaymentStore
     {
         await using var connection = await dataSource.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
+        var loanIds = payments.Select(payment => payment.LoanId.Value).Distinct().ToArray();
+        // NOTE(aalhendi): Lock touched loans in ID order so concurrent uploads see prior payments before deciding closure.
+        var loans = (await connection.QueryAsync<LoanRow>("""
+                                                         SELECT id AS "Id", start_date AS "StartDate"
+                                                         FROM loans
+                                                         WHERE id = ANY(@LoanIds) AND institution_id = @InstitutionId
+                                                         ORDER BY id FOR UPDATE
+                                                         """, new { LoanIds = loanIds, InstitutionId = institutionId.Value },
+            transaction)).ToDictionary(loan => loan.Id);
+        if (loans.Count != loanIds.Length) return new PaymentLoanMissing();
+
         var ids = new List<PaymentId>(payments.Count);
 
         foreach (var payment in payments)
         {
-            var loan = await connection.QuerySingleOrDefaultAsync<LoanRow>("""
-                                                                           SELECT institution_id AS "InstitutionId",
-                                                                                  start_date AS "StartDate"
-                                                                           FROM loans WHERE id = @LoanId
-                                                                           """, new { LoanId = payment.LoanId.Value },
-                transaction);
-            if (loan is null || loan.InstitutionId != institutionId.Value)
-                return new PaymentLoanMissing();
+            var loan = loans[payment.LoanId.Value];
             if (payment.PaymentDate < loan.StartDate)
                 return new PaymentBeforeLoanStart();
 
@@ -69,6 +73,14 @@ internal sealed class PaymentStore(NpgsqlDataSource dataSource) : IPaymentStore
             ids.Add(ReadPaymentId(existing.Id));
         }
 
+        await connection.ExecuteAsync("""
+                                      UPDATE loans SET status = 'Closed'
+                                      WHERE id = ANY(@LoanIds) AND status = 'Open'
+                                        AND (SELECT sum(amount_kwd) FROM loan_payments
+                                             WHERE loan_id = loans.id) >=
+                                            (SELECT sum(amount_kwd) FROM loan_installments
+                                             WHERE loan_id = loans.id)
+                                      """, new { LoanIds = loanIds }, transaction);
         await transaction.CommitAsync();
         return new PaymentsRecorded(ids);
     }
@@ -77,7 +89,7 @@ internal sealed class PaymentStore(NpgsqlDataSource dataSource) : IPaymentStore
         ? id
         : throw new InvalidOperationException("Invalid payment ID in the repayment database.");
 
-    private sealed record LoanRow(Guid InstitutionId, DateOnly StartDate);
+    private sealed record LoanRow(Guid Id, DateOnly StartDate);
 
     private sealed record ExistingPayment(Guid Id, Guid LoanId, DateOnly PaymentDate, decimal AmountKwd);
 }

@@ -90,7 +90,8 @@ internal static class LendingHandlers
     }
 
     internal static async Task<IResult> UploadPaymentsAsync(
-        UploadPaymentsRequest request, HttpContext context, AccessActorClient access, PaymentService service)
+        UploadPaymentsRequest request, HttpContext context, AccessActorClient access,
+        PaymentService service, TimeProvider clock)
     {
         var actor = await LendingActorHttp.ReadAsync(context, access);
         if (actor.Value is not ActorResolved resolved) return LendingActorHttp.Error(context, actor);
@@ -110,14 +111,16 @@ internal static class LendingHandlers
             payments.Add(new PaymentDraft(loanId, paymentDate, amount, reference));
         }
 
+        var today = DateOnly.FromDateTime(clock.GetUtcNow().ToOffset(TimeSpan.FromHours(3)).DateTime);
         context.Response.Headers.CacheControl = "no-store";
-        return await service.UploadAsync(resolved.Actor, payments) switch
+        return await service.UploadAsync(resolved.Actor, payments, today) switch
         {
             PaymentsRecorded recorded => Results.Ok(new UploadPaymentsResponse(
                 recorded.Ids.Select(id => id.Value).ToArray())),
             PaymentLoanMissing => Results.NotFound(),
             PaymentReferenceConflict => Results.Conflict("Payment reference was already used for different data."),
             PaymentBeforeLoanStart => Results.BadRequest("Payment date precedes the loan start date."),
+            PaymentInFuture => Results.BadRequest("Payment date cannot be in the future."),
             LoanForbidden => Results.StatusCode(403)
         };
     }

@@ -35,7 +35,7 @@ When a bank creates a loan, Lending asks Credit whether the customer exists. Len
 | Customer | A person identified by a Kuwaiti Civil ID. |
 | Loan eligibility | Lending's current answer to whether an existing customer can receive a new loan: yes when CINET has not blocked them. |
 | Loan block | The customer-wide restriction changed by authorized CINET staff. A blocked customer cannot receive a new loan. |
-| Loan | A bank's financing record for a customer. It records the principal, financing rate, tenor, start date, status, and reported repayment schedule. |
+| Loan | A bank's financing record for a customer. It records the principal, financing rate, tenor, start date, status, and reported repayment schedule. It closes when reported payments cover the full schedule, even if paid early. |
 | Principal | The amount originally financed, in KWD. It is not the amount still due. |
 | Financing rate | The reported interest or profit rate. Lending stores it but does not derive installment amounts from it. |
 | Tenor | The length of the loan in months. |
