@@ -59,6 +59,14 @@ internal static class Routes
             .Produces(403)
             .Produces(503);
 
+        app.MapPost("/customers/loans/active-total", ActiveLoanTotalHandlers.ReadAsync)
+            .DocumentBearerToken()
+            .Produces<ActiveLoanTotalResponse>()
+            .Produces(400)
+            .Produces(401)
+            .Produces(403)
+            .Produces(503);
+
         app.MapPost("/loans/{loanId:guid}/litigations", LitigationHandlers.OpenAsync)
             .DocumentBearerToken()
             .Produces<LitigationOpenedResponse>(201)

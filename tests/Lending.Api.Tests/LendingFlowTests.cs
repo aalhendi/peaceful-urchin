@@ -282,6 +282,118 @@ public sealed class LendingFlowTests
     }
 
     [Fact]
+    public async Task ActiveLoanTotalExcludesPendingCasesAndClosedLoans()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SetKuwaitDate(new DateOnly(2026, 10, 10));
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+
+        using var emptyResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var empty = await ReadActiveLoanTotalReceiptAsync(emptyResponse);
+        Assert.Equal(0, empty.LoanCount);
+        Assert.Equal(0m, empty.OriginalPrincipalTotalKwd);
+
+        using var firstCreated = await CreateLoanAsync(app.LendingClient, bankToken, LoanBody(CustomerId, 1000.125m));
+        using var secondCreated = await CreateLoanAsync(app.LendingClient, bankToken, LoanBody(CustomerId, 250.500m));
+        Assert.Equal(HttpStatusCode.Created, firstCreated.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, secondCreated.StatusCode);
+        var firstLoan = Assert.IsType<LoanReceipt>(await firstCreated.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+        var secondLoan = Assert.IsType<LoanReceipt>(await secondCreated.Content.ReadFromJsonAsync<LoanReceipt>(
+            TestContext.Current.CancellationToken));
+        using var bothResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var both = await ReadActiveLoanTotalReceiptAsync(bothResponse);
+        Assert.Equal(2, both.LoanCount);
+        Assert.Equal(1250.625m, both.OriginalPrincipalTotalKwd);
+
+        using var opened = await OpenLitigationAsync(app.LendingClient, cinetToken, firstLoan.Id, "KUW/2026/003");
+        Assert.Equal(HttpStatusCode.Created, opened.StatusCode);
+        var caseId = Assert.IsType<LitigationOpenedReceipt>(await opened.Content.ReadFromJsonAsync<
+            LitigationOpenedReceipt>(TestContext.Current.CancellationToken)).LitigationId;
+        using var pendingResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var pending = await ReadActiveLoanTotalReceiptAsync(pendingResponse);
+        Assert.Equal(1, pending.LoanCount);
+        Assert.Equal(250.500m, pending.OriginalPrincipalTotalKwd);
+
+        using var verdict = await RecordVerdictAsync(app.LendingClient, cinetToken, caseId,
+            "Guilty", new DateOnly(2026, 10, 9));
+        Assert.Equal(HttpStatusCode.NoContent, verdict.StatusCode);
+        using var resolvedResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var resolved = await ReadActiveLoanTotalReceiptAsync(resolvedResponse);
+        Assert.Equal(2, resolved.LoanCount);
+        Assert.Equal(1250.625m, resolved.OriginalPrincipalTotalKwd);
+
+        using var secondCase = await OpenLitigationAsync(app.LendingClient, cinetToken, firstLoan.Id, "KUW/2026/004");
+        Assert.Equal(HttpStatusCode.Created, secondCase.StatusCode);
+        var secondCaseId = Assert.IsType<LitigationOpenedReceipt>(await secondCase.Content.ReadFromJsonAsync<
+            LitigationOpenedReceipt>(TestContext.Current.CancellationToken)).LitigationId;
+        using var anotherPendingResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var anotherPending = await ReadActiveLoanTotalReceiptAsync(anotherPendingResponse);
+        Assert.Equal(1, anotherPending.LoanCount);
+        Assert.Equal(250.500m, anotherPending.OriginalPrincipalTotalKwd);
+
+        using var innocent = await RecordVerdictAsync(app.LendingClient, cinetToken, secondCaseId,
+            "Innocent", new DateOnly(2026, 10, 10));
+        Assert.Equal(HttpStatusCode.NoContent, innocent.StatusCode);
+        using var bothResolvedResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var bothResolved = await ReadActiveLoanTotalReceiptAsync(bothResolvedResponse);
+        Assert.Equal(2, bothResolved.LoanCount);
+        Assert.Equal(1250.625m, bothResolved.OriginalPrincipalTotalKwd);
+
+        await using (var connection = new NpgsqlConnection(app.LendingConnectionString))
+            await connection.ExecuteAsync("UPDATE loans SET status = 'Closed' WHERE id = @Id",
+                new { Id = secondLoan.Id });
+        using var closedResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        var closed = await ReadActiveLoanTotalReceiptAsync(closedResponse);
+        Assert.Equal(1, closed.LoanCount);
+        Assert.Equal(1000.125m, closed.OriginalPrincipalTotalKwd);
+    }
+
+    [Fact]
+    public async Task ActiveLoanTotalScopesBanksAndRequiresCustomerRead()
+    {
+        await using var app = await TestApp.StartAsync();
+        await app.SeedSecondBankAsync();
+        var bankToken = await LoginAsync(app.AccessClient, "bank@example.test", "bank-local");
+        var otherBankToken = await LoginAsync(app.AccessClient, "bank-b@example.test", "bank-local");
+        var cinetToken = await LoginAsync(app.AccessClient, "cinet@example.test", "cinet-local");
+        var bank = await ActorAsync(app.AccessClient, bankToken);
+        using var firstCreated = await CreateLoanAsync(app.LendingClient, bankToken, LoanBody(CustomerId, 1000.125m));
+        using var secondCreated = await CreateLoanAsync(app.LendingClient, otherBankToken,
+            LoanBody(CustomerId, 500.500m));
+        Assert.Equal(HttpStatusCode.Created, firstCreated.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, secondCreated.StatusCode);
+
+        using var bankResponse = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        using var otherBankResponse = await ReadActiveLoanTotalAsync(app.LendingClient, otherBankToken);
+        using var cinetResponse = await ReadActiveLoanTotalAsync(app.LendingClient, cinetToken);
+        var bankTotal = await ReadActiveLoanTotalReceiptAsync(bankResponse);
+        var otherBankTotal = await ReadActiveLoanTotalReceiptAsync(otherBankResponse);
+        var cinetTotal = await ReadActiveLoanTotalReceiptAsync(cinetResponse);
+        Assert.Equal(1, bankTotal.LoanCount);
+        Assert.Equal(1000.125m, bankTotal.OriginalPrincipalTotalKwd);
+        Assert.Equal(1, otherBankTotal.LoanCount);
+        Assert.Equal(500.500m, otherBankTotal.OriginalPrincipalTotalKwd);
+        Assert.Equal(2, cinetTotal.LoanCount);
+        Assert.Equal(1500.625m, cinetTotal.OriginalPrincipalTotalKwd);
+        Assert.Equal("no-store", bankResponse.Headers.CacheControl?.ToString());
+
+        using var missingToken = await ReadActiveLoanTotalAsync(app.LendingClient, null);
+        using var invalidId = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken, "invalid");
+        Assert.Equal(HttpStatusCode.Unauthorized, missingToken.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, invalidId.StatusCode);
+
+        using var roleChange = new HttpRequestMessage(HttpMethod.Put, $"/staff-users/{bank.ActorId}/roles");
+        roleChange.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cinetToken);
+        roleChange.Content = JsonContent.Create(new { Roles = new[] { "LoanCreator", "PaymentWriter" } });
+        using var changed = await app.AccessClient.SendAsync(roleChange, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.NoContent, changed.StatusCode);
+        using var forbidden = await ReadActiveLoanTotalAsync(app.LendingClient, bankToken);
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+    }
+
+    [Fact]
     public async Task InvalidInputsAndInvalidSessionDoNotWriteLoans()
     {
         await using var app = await TestApp.StartAsync();
@@ -615,6 +727,8 @@ public sealed class LendingFlowTests
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
         Assert.True(paths.GetProperty("/customers/repayments/summary").GetProperty("post")
             .GetProperty("security")[0].TryGetProperty("Bearer", out _));
+        Assert.True(paths.GetProperty("/customers/loans/active-total").GetProperty("post")
+            .GetProperty("security")[0].TryGetProperty("Bearer", out _));
         var litigationRoute = paths.GetProperty("/loans/{loanId}/litigations");
         Assert.True(litigationRoute.GetProperty("post").GetProperty("security")[0]
             .TryGetProperty("Bearer", out _));
@@ -659,12 +773,12 @@ public sealed class LendingFlowTests
             TestContext.Current.CancellationToken));
     }
 
-    private static object LoanBody(string customerId) => new
+    private static object LoanBody(string customerId, decimal amountKwd = 1000.125m) => new
     {
         CustomerCivilId = customerId,
         StartDate = "2026-10-01",
         TenorMonths = 24,
-        AmountKwd = 1000.125m,
+        AmountKwd = amountKwd,
         RatePercent = 7.5m,
         Installments = DemoInstallments(24)
     };
@@ -709,6 +823,22 @@ public sealed class LendingFlowTests
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         return Assert.IsType<RepaymentSummaryReceipt>(await response.Content.ReadFromJsonAsync<RepaymentSummaryReceipt>(
+            TestContext.Current.CancellationToken));
+    }
+
+    private static async Task<HttpResponseMessage> ReadActiveLoanTotalAsync(
+        HttpClient client, string? token, string customerId = CustomerId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/customers/loans/active-total");
+        if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        request.Content = JsonContent.Create(new { CustomerCivilId = customerId });
+        return await client.SendAsync(request, TestContext.Current.CancellationToken);
+    }
+
+    private static async Task<ActiveLoanTotalReceipt> ReadActiveLoanTotalReceiptAsync(HttpResponseMessage response)
+    {
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        return Assert.IsType<ActiveLoanTotalReceipt>(await response.Content.ReadFromJsonAsync<ActiveLoanTotalReceipt>(
             TestContext.Current.CancellationToken));
     }
 
@@ -830,6 +960,8 @@ public sealed class LendingFlowTests
         DelinquentLoanReceipt[] DelinquentLoans,
         DuePaymentReceipt? NextDuePayment,
         RecordedPaymentReceipt[] LastFivePayments);
+
+    private sealed record ActiveLoanTotalReceipt(long LoanCount, decimal OriginalPrincipalTotalKwd);
 
     private sealed record DelinquentLoanReceipt(Guid LoanId, decimal OverdueAmountKwd);
 
