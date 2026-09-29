@@ -7,6 +7,7 @@ services:
       dockerfile: src/Access.Api/Dockerfile
     environment:
       ASPNETCORE_HTTP_PORTS: 8080
+      ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Access: "Host=postgres;Port=5432;Database=access_db;Username=access_app;Password=access-local"
     depends_on:
       postgres:
@@ -26,6 +27,7 @@ services:
       dockerfile: src/Lending.Api/Dockerfile
     environment:
       ASPNETCORE_HTTP_PORTS: 8080
+      ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Lending: "Host=postgres;Port=5432;Database=lending_db;Username=lending_app;Password=lending-local"
       Access__BaseUrl: "http://access:8080/"
       Credit__BaseUrl: "http://credit:8080/"
@@ -51,6 +53,7 @@ services:
       dockerfile: src/Credit.Api/Dockerfile
     environment:
       ASPNETCORE_HTTP_PORTS: 8080
+      ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Credit: "Host=postgres;Port=5432;Database=credit_db;Username=credit_app;Password=credit-local"
       Access__BaseUrl: "http://access:8080/"
     depends_on:
